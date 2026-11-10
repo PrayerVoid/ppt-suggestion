@@ -183,15 +183,36 @@ def new_presentation():
 
 
 def decorate_corner(slide, kind="dots"):
-    """Simple geometric decoration only in blank corners (README: 空白处)."""
-    if kind == "dots":
-        for i, (dx, dy, r) in enumerate([(0.0, 0.0, 0.05), (0.16, 0.05, 0.035), (0.06, 0.18, 0.03)]):
-            c = add_rect(slide, PAGE_W - 1.55 + dx, 0.42 + dy, r, r, ACCENT_LT if i else ACCENT,
-                         shape=MSO_SHAPE.OVAL)
-            c.rotation = 0
-    elif kind == "line":
-        add_hline(slide, PAGE_W - 1.9, PAGE_W - 0.7, 0.72, color=ACCENT, w=1.5)
-        add_rect(slide, PAGE_W - 1.9, 0.66, 0.18, 0.06, ACCENT)
+    """Simple geometric decoration only in blank corners (README: 空白处).
+
+    large  封面/章节页：右上角大圆 + 相交描边圆 + 小点，右下角小色块
+    medium 目录页：同一组图形，尺寸缩小
+    mini   正文页：与封面同构的右上/右下小图形，只占页边角，不碰文字区
+    """
+    O = MSO_SHAPE.OVAL
+    if kind in ("dots", "large"):
+        add_rect(slide, PAGE_W - 2.3, 0.0, 2.3, 2.3, ACCENT_LT, shape=O)
+        add_rect(slide, PAGE_W - 3.1, 0.95, 1.5, 1.5, None, line=ACCENT, line_w=1.0, shape=O)
+        add_rect(slide, PAGE_W - 0.85, 1.75, 0.2, 0.2, ACCENT, shape=O)
+        add_rect(slide, PAGE_W - 1.4, 7.3, 0.5, 0.2, ACCENT_LT)
+        add_rect(slide, PAGE_W - 0.9, 7.3, 0.9, 0.2, ACCENT)
+        # 下方空白处：相交圆 + 细线
+        add_rect(slide, PAGE_W - 3.0, 4.95, 2.0, 2.0, ACCENT_LT, shape=O)
+        add_rect(slide, PAGE_W - 2.3, 5.55, 1.4, 1.4, None, line=ACCENT, line_w=1.0, shape=O)
+        add_hline(slide, PAGE_W - 4.4, PAGE_W - 3.2, 6.85, color=ACCENT, w=1.0)
+    elif kind == "medium_blank":
+        add_rect(slide, PAGE_W - 2.4, 5.5, 1.4, 1.4, ACCENT_LT, shape=O)
+        add_rect(slide, PAGE_W - 1.9, 6.0, 1.0, 1.0, None, line=ACCENT, line_w=1.0, shape=O)
+    elif kind in ("line", "medium"):
+        add_rect(slide, PAGE_W - 1.5, 0.0, 1.5, 1.5, ACCENT_LT, shape=O)
+        add_rect(slide, PAGE_W - 2.1, 0.55, 1.0, 1.0, None, line=ACCENT, line_w=1.0, shape=O)
+        add_rect(slide, PAGE_W - 0.6, 1.3, 0.14, 0.14, ACCENT, shape=O)
+        add_rect(slide, PAGE_W - 1.0, 7.3, 1.0, 0.2, ACCENT_LT)
+    elif kind == "mini":
+        add_rect(slide, PAGE_W - 0.75, 0.0, 0.75, 0.75, ACCENT_LT, shape=O)
+        add_rect(slide, PAGE_W - 0.88, 0.32, 0.42, 0.42, None, line=ACCENT, line_w=0.75, shape=O)
+        add_rect(slide, PAGE_W - 0.32, 0.9, 0.09, 0.09, ACCENT, shape=O)
+        add_rect(slide, PAGE_W - 0.6, 7.38, 0.6, 0.12, ACCENT_LT)
 
 
 def render_cover(slide, s):
@@ -238,6 +259,8 @@ def render_catalog(slide, s):
         add_hline(slide, MARGIN_L, PAGE_W - MARGIN_R, y + 0.82, color=LINE, w=0.5)
         y += 1.02
     decorate_corner(slide, "line")
+    if len(items) <= 4:
+        decorate_corner(slide, "medium_blank")
 
 
 def render_section(slide, s, num, title, subtitle):
@@ -257,6 +280,7 @@ def content_area():
 def render_content(slide, s, style):
     title = s.get("title", "")
     chapter = s.get("chapter", "")
+    decorate_corner(slide, "mini")
     add_text(slide, MARGIN_L, 0.5, 10.8, 0.6, title, size=25, bold=True)
     if chapter:
         add_text(slide, PAGE_W - MARGIN_R - 3.4, 0.2, 3.4, 0.3, chapter, size=11,
