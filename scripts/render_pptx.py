@@ -117,6 +117,11 @@ def no_shadow(shape) -> None:
         parent = node.getparent()
         if parent is not None:
             parent.remove(node)
+    # 形状样式的 effectRef 会引用主题阴影；显式写入空 effectLst 才能真正关掉
+    try:
+        shape.shadow.inherit = False
+    except Exception:
+        pass
 
 
 def add_rect(slide, l, t, w, h, fill, line=None, line_w=0.75, shape=MSO_SHAPE.RECTANGLE):
@@ -196,10 +201,9 @@ def decorate_corner(slide, kind="dots"):
         add_rect(slide, PAGE_W - 0.85, 1.75, 0.2, 0.2, ACCENT, shape=O)
         add_rect(slide, PAGE_W - 1.4, 7.3, 0.5, 0.2, ACCENT_LT)
         add_rect(slide, PAGE_W - 0.9, 7.3, 0.9, 0.2, ACCENT)
-        # 下方空白处：相交圆 + 细线
+        # 下方空白处：相交圆
         add_rect(slide, PAGE_W - 3.0, 4.95, 2.0, 2.0, ACCENT_LT, shape=O)
         add_rect(slide, PAGE_W - 2.3, 5.55, 1.4, 1.4, None, line=ACCENT, line_w=1.0, shape=O)
-        add_hline(slide, PAGE_W - 4.4, PAGE_W - 3.2, 6.85, color=ACCENT, w=1.0)
     elif kind == "medium_blank":
         add_rect(slide, PAGE_W - 2.4, 5.5, 1.4, 1.4, ACCENT_LT, shape=O)
         add_rect(slide, PAGE_W - 1.9, 6.0, 1.0, 1.0, None, line=ACCENT, line_w=1.0, shape=O)
@@ -288,6 +292,7 @@ def render_content(slide, s, style):
     add_hline(slide, MARGIN_L, PAGE_W - MARGIN_R, 1.32, color=LINE, w=0.75)
     x, y0, w, h = content_area()
     y = y0
+    first_idx = len(slide.shapes)
     for b in s.get("blocks", []):
         if not isinstance(b, dict):
             continue
@@ -295,6 +300,13 @@ def render_content(slide, s, style):
         if y + bh > CONTENT_BOTTOM + 0.03:
             raise RuntimeError(f"内容超出页面底部: 「{title}」blocks 排布过高")
         y += bh + BLOCK_GAP
+    # 内容偏少时整体下移，让上下留白更均匀（最多下移 1.0in）
+    total = y - BLOCK_GAP - y0
+    avail = CONTENT_BOTTOM - y0
+    if 0 < total < avail * 0.85:
+        dy = Inches(min((avail - total) / 2, 0.8))
+        for sh in list(slide.shapes)[first_idx:]:
+            sh.top = sh.top + dy
     # footer: source + page number
     src = s.get("source") or style.get("source", "")
     if src:
@@ -371,12 +383,12 @@ def _columns(slide, x, y, w, b, style):
             add_text(slide, cx, y + 0.32, cw, 0.3, kicker, size=11, bold=True, color=FAINT)
         t = it.get("title", "")
         if t:
-            add_text(slide, cx, y + 0.62, cw, 0.4, t, size=15, bold=True)
+            add_text(slide, cx, y + 0.62, cw, 0.4, t, size=17, bold=True)
         body = it.get("body", "")
         if body:
-            bh = text_height(body, 13, cw)
-            add_text(slide, cx, y + 1.05, cw, bh + 0.1, body, size=13, color=SUBTLE, line_spacing=1.2)
-            maxh = max(maxh, 1.05 + bh + 0.1)
+            bh = text_height(body, 15, cw)
+            add_text(slide, cx, y + 1.15, cw, bh + 0.35, body, size=15, color=SUBTLE, line_spacing=1.25)
+            maxh = max(maxh, 1.15 + bh + 0.1)
     return max(maxh, 1.35)
 
 
@@ -479,11 +491,15 @@ def _table(slide, x, y, w, b, style):
     if ncols == 0 or nrows == 0:
         return 0.5
     cw = w / ncols
-    rh = 0.42
-    h = rh * (nrows + 1)
+    rhs = [0.5] + [
+        max(0.5, max(text_height(str(c), 12, cw - 0.25) for c in row) + 0.22) for row in rows
+    ]
+    h = sum(rhs)
     tbl = slide.shapes.add_table(nrows + 1, ncols, Inches(x), Inches(y), Inches(w), Inches(h)).table
     tbl.first_row = True
     tbl.horz_banding = False
+    for ri_, rh_ in enumerate(rhs):
+        tbl.rows[ri_].height = Inches(rh_)
     for ci, hd in enumerate(headers):
         cell = tbl.cell(0, ci)
         cell.fill.solid()
@@ -492,7 +508,7 @@ def _table(slide, x, y, w, b, style):
         p = cell.text_frame.paragraphs[0]
         r = p.add_run()
         r.text = str(hd)
-        _set_font(r, size=12, bold=True, color=TEXT)
+        _set_font(r, size=13, bold=True, color=TEXT)
     for ri, row in enumerate(rows):
         for ci in range(ncols):
             cell = tbl.cell(ri + 1, ci)
@@ -502,7 +518,7 @@ def _table(slide, x, y, w, b, style):
             p = cell.text_frame.paragraphs[0]
             r = p.add_run()
             r.text = str(row[ci]) if ci < len(row) else ""
-            _set_font(r, size=11, color=TEXT)
+            _set_font(r, size=12, color=TEXT)
     return h
 
 
@@ -516,12 +532,13 @@ def _split(slide, x, y, w, b, style):
         add_text(slide, x, y, lw, 0.3, left.get("kicker", ""), size=11, bold=True, color=FAINT)
     t = left.get("title", "")
     if t:
-        th = text_height(t, 24, lw)
+        th = sum(text_height(seg, 24, lw) for seg in t.split("\n")) + 0.1 * (t.count("\n"))
         add_text(slide, x, y + 0.3, lw, th + 0.2, t, size=24, bold=True, line_spacing=1.1)
     body = left.get("body", "")
     if body:
-        bh = text_height(body, 13, lw)
-        add_text(slide, x, y + 1.0, lw, bh + 0.1, body, size=13, color=SUBTLE, line_spacing=1.2)
+        bh = text_height(body, 14, lw)
+        by = y + 0.3 + (th if t else 0) + 0.3
+        add_text(slide, x, by, lw, bh + 0.1, body, size=14, color=SUBTLE, line_spacing=1.25)
     rx = x + lw + 0.3
     rk = right.get("kicker", "")
     items = right.get("items", [])
@@ -558,12 +575,12 @@ def _callouts(slide, x, y, w, b, style):
         ch = 0.85
         body = it.get("body", "")
         if body:
-            ch = max(ch, 0.55 + text_height(body, 12, w - 0.5) + 0.12)
+            ch = max(ch, 0.6 + text_height(body, 13, w - 0.5) + 0.15)
         add_rect(slide, x, y + h, w, ch, PANEL)
         add_rect(slide, x, y + h, 0.06, ch, ACCENT)
-        add_text(slide, x + 0.22, y + h + 0.12, w - 0.5, 0.3, it.get("title", ""), size=14, bold=True)
+        add_text(slide, x + 0.22, y + h + 0.12, w - 0.5, 0.3, it.get("title", ""), size=15, bold=True)
         if body:
-            add_text(slide, x + 0.22, y + h + 0.42, w - 0.5, ch - 0.5, body, size=12, color=SUBTLE,
+            add_text(slide, x + 0.22, y + h + 0.46, w - 0.5, ch - 0.5, body, size=13, color=SUBTLE,
                      line_spacing=1.15)
         h += ch + 0.18
     return h
@@ -599,12 +616,12 @@ def _rows(slide, x, y, w, b, style):
         tag = it.get("tag", "")
         if tag:
             tw = 0.1 + len(tag) * 0.18
-            rh = max(rh, text_height(it.get("text", ""), 13, w - tw - 0.3) + 0.22)
+            rh = max(0.7, text_height(it.get("text", ""), 15, w - tw - 0.3) + 0.3)
             add_rect(slide, x, y + h, tw, rh, ACCENT_LT)
             add_text(slide, x, y + h + 0.06, tw, 0.3, tag, size=11, bold=True, color=ACCENT_DK,
                      align=PP_ALIGN.CENTER)
-            add_text(slide, x + tw + 0.22, y + h + 0.08, w - tw - 0.3, rh - 0.1, it.get("text", ""),
-                     size=13, color=TEXT)
+            add_text(slide, x + tw + 0.22, y + h + 0.12, w - tw - 0.3, rh - 0.1, it.get("text", ""),
+                     size=15, color=TEXT)
         else:
             add_text(slide, x, y + h + 0.08, w, rh - 0.1, it.get("text", ""), size=13, color=TEXT)
         if h > 0:
@@ -746,13 +763,13 @@ def _points(slide, x, y, w, b, style):
         ph = 0.72
         add_text(slide, x, y + h + 0.08, 0.5, 0.4, f"{i + 1:02d}", size=14, bold=True, color=ACCENT)
         t = it.get("title", "")
-        add_text(slide, x + 0.55, y + h + 0.05, w - 0.6, 0.35, t, size=15, bold=True)
+        add_text(slide, x + 0.55, y + h + 0.05, w - 0.6, 0.4, t, size=17, bold=True)
         body = it.get("body", "")
         if body:
-            bh = text_height(body, 12, w - 0.6)
-            add_text(slide, x + 0.55, y + h + 0.38, w - 0.6, bh + 0.05, body, size=12, color=SUBTLE,
-                     line_spacing=1.15)
-            ph = 0.4 + bh + 0.15
+            bh = text_height(body, 14, w - 0.6)
+            add_text(slide, x + 0.55, y + h + 0.45, w - 0.6, bh + 0.05, body, size=14, color=SUBTLE,
+                     line_spacing=1.2)
+            ph = 0.5 + bh + 0.22
         add_hline(slide, x, x + w, y + h + ph - 0.05, color=LINE, w=0.5)
         h += ph
     return h
