@@ -20,12 +20,12 @@
 ```
 
 
-| 阶段            | 做什么                                        | 产物                         | 门禁                         |
-| ----------------- | ----------------------------------------------- | ------------------------------ | ------------------------------ |
-| ① 阅读材料     | 转 Markdown、判断领域、模板分析、充分性检查   | `材料摘要.md`、`模板摘要.md` | 资料缺口先问用户，绝不臆造   |
-| ② 生成内容规划 | 意图→骨架→逐页结论句；全量去 AI 味改写      | `STORY.md`、`deck.json`      | 大纲确认（用户没反对再往下） |
-| ③ 排版渲染     | `deck_check.py` 校验 → `render_pptx.py` 渲染 | `<中文名>.pptx`              | 校验失败禁止跳过             |
-| ④ 结果校验     | `validate_pptx.py` + 逐页复核清单             | `校验报告.md`                | 修复闭环后交付               |
+| 阶段            | 做什么                                                | 产物                         | 门禁                         |
+| ----------------- | ------------------------------------------------------- | ------------------------------ | ------------------------------ |
+| ① 阅读材料     | 转 Markdown、判断领域、模板分析、充分性检查           | `材料摘要.md`、`模板摘要.md` | 资料缺口先问用户，绝不臆造   |
+| ② 生成内容规划 | 意图→骨架→逐页结论句；全量去 AI 味改写              | `STORY.md`、`deck.json`      | 大纲确认（用户没反对再往下） |
+| ③ 排版渲染     | `deck_check.py` 校验 → `render_pptx.py` 渲染         | `<中文名>.pptx`              | 校验失败禁止跳过             |
+| ④ 结果校验     | `validate_pptx.py` + `render_preview.py` 出图逐页复核 | `校验报告.md`                | 修复闭环后交付               |
 
 ## 目录结构
 
@@ -47,13 +47,15 @@ ppt-suggestion/
     ├── deck_check.py        # deck.json 结构校验（渲染前）
     ├── render_pptx.py       # 渲染器（无模板白底 / 有模板继承）
     ├── validate_pptx.py     # 输出校验（重叠/越界/溢出/图片/版式）
+    ├── render_preview.py    # pptx 逐页转 PNG 供目视自查（Aspose 优先，自动退回 Pillow 近似渲染）
+    ├── setup_libgdiplus_macos.sh  # macOS 无 Homebrew 时编译 libgdiplus，让 Aspose 可用
     └── text_measure.py      # 文本估算（renderer/validator 共用）
 ```
 
 ## 快速上手
 
 ```bash
-# 1. 阅读材料（HTML 源文件转 Markdown）
+# 1. 阅读材料（源文件转 Markdown）
 python <venv>/bin/python .comate/skills/ppt-suggestion/scripts/source_to_md.py 参考资料.html -o 材料.md
 
 # 2. 有模板时先分析模板
@@ -68,10 +70,22 @@ python <venv>/bin/python .comate/skills/ppt-suggestion/scripts/render_pptx.py --
 
 # 5. 校验产出
 python <venv>/bin/python .comate/skills/ppt-suggestion/scripts/validate_pptx.py 汇报.pptx --deck deck.json
+
+# 6. 渲染成图片目视自查（Aspose 优先，不可用时自动退回 Pillow 近似渲染）
+python <venv>/bin/python .comate/skills/ppt-suggestion/scripts/render_preview.py 汇报.pptx -o /tmp/ppt_preview --sheet
 ```
 
-本机渲染请用专用 venv 的 python（系统 python3 受 PEP 668 管理）：
-`/Users/vow/.comate-engine/pptx-venv/bin/python`。渲染/校验是前台短任务，不要放后台。
+### 预览渲染说明
+
+- `--engine auto`（默认）先试 Aspose.Slides，失败退回 Pillow；也可用 `--engine aspose|pillow` 指定。
+- Aspose 安装（国内走清华源）：`uv pip install --python <venv>/bin/python -i https://pypi.tuna.tsinghua.edu.cn/simple aspose-slides`。
+  Linux/macOS 还需要 libgdiplus（macOS：`brew install mono-libgdiplus`），否则报
+  `The type initializer for 'Gdip' threw an exception`。免费评估模式图上有水印，预览图不交付。
+- macOS、无 Homebrew的处理路径：运行 `bash scripts/setup_libgdiplus_macos.sh`，用 micromamba 装依赖并从
+  Mono 官方源码包编译 libgdiplus 到 `~/.comate-engine/gdip/`（不需要管理员权限，约 3–5 分钟，需 Xcode CLT）。
+  装好后 `render_preview.py` 自动带上 `DYLD_LIBRARY_PATH`。
+  有 Homebrew 的机器直接 `brew install mono-libgdiplus` 即可。conda-forge 没有 libgdiplus，GitHub 源码包缺子模块，都不可用。
+- Pillow 引擎能看出重叠、溢出、内容失衡，字体和换行与 PowerPoint 有出入。
 
 ## 定制指南
 
