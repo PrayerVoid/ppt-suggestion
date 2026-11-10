@@ -43,7 +43,9 @@ def collect_text(s: dict) -> list:
             v = b.get(k)
             if isinstance(v, str):
                 out.append(v)
-        for side in ("left", "right"):
+        if isinstance(b.get("caption"), str):
+            out.append(b["caption"])
+        for side in ("left", "right", "side"):
             if isinstance(b.get(side), dict):
                 out.extend(_collect_side(b[side]))
         for it in b.get("items", []):
