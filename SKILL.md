@@ -21,12 +21,12 @@ metadata:
 各阶段读哪个文件、跑哪个脚本，按下表：
 
 
-| 阶段        | 必读                                                                           | 必跑 / 产物                                                                                         |
-| ------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| ① 阅读材料 | `references/source-intake.md`                                                  | `source_to_md.py`（HTML/URL）、`analyze_template.py`（有模板时）；产物 `材料摘要.md`、`模板摘要.md` |
-| ② 内容规划 | `references/story.md` + `references/humanize.md` + `references/deck-schema.md` | `deck_check.py` 渲染前校验；产物 `STORY.md`、`deck.json`                                            |
-| ③ 排版渲染 | `references/design.md` + `references/template-inherit.md`（有模板时）          | `render_pptx.py --input deck.json --output <中文名>.pptx [--template 模板.pptx]`                    |
-| ④ 结果校验 | `references/validation.md`                                                     | `validate_pptx.py <out.pptx> --deck deck.json`；产物 `校验报告.md`                                  |
+| 阶段        | 必读                                                                           | 必跑 / 产物                                                                                                                             |
+| ------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| ① 阅读材料 | `references/source-intake.md`                                                  | `source_to_md.py`（HTML/URL）、`analyze_template.py`（有模板时）；产物 `材料摘要.md`、`模板摘要.md`                                     |
+| ② 内容规划 | `references/story.md` + `references/humanize.md` + `references/deck-schema.md` | `deck_check.py` 渲染前校验；产物 `STORY.md`、`deck.json`                                                                                |
+| ③ 排版渲染 | `references/design.md` + `references/template-inherit.md`（有模板时）          | `render_pptx.py --input deck.json --output <中文名>.pptx [--template 模板.pptx]`                                                        |
+| ④ 结果校验 | `references/validation.md`                                                     | `validate_pptx.py <out.pptx> --deck deck.json`；`render_preview.py <out.pptx> -o /tmp/ppt_preview --sheet` 出图自查；产物 `校验报告.md` |
 
 每个 references 文档本身就是完整的设计规范（视觉、文案、模板、校验要求均已内化其中），
 按要求执行即可，不需要再对照其他外部文档。
@@ -83,10 +83,17 @@ metadata:
    ```
 
    **Hard 问题必须为零**才交付；Soft 警告可接受（`--strict` 除外）。
-2. 模型自查：对照 `validation.md` 的 Hard/Soft 清单逐页复核——
-   排版（重叠/遮蔽/越界/可读性）、图片（模糊/拉伸/水印）、信息量（过高或过低）、
+2. 模型自查：先把每页渲染成图片再看（支持视觉时必做）：
+   ```
+   python <venv-python> scripts/render_preview.py "<输出的.pptx>" -o /tmp/ppt_preview --sheet
+   ```
+
+   默认先试 Aspose.Slides，缺 libgdiplus 等原因失败时自动退回内置近似渲染（stderr 会写明用了哪个）。
+   macOS 没有 Homebrew 时先跑一次 `bash scripts/setup_libgdiplus_macos.sh`（详见 `validation.md` §2.0）。
+   用 Read 看 `sheetN.png`（2x2 四页）。再对照 `validation.md` 的 Hard/Soft 清单逐页复核——
+   排版（重叠/遮蔽/越界/可读性/内容失衡）、图片（模糊/拉伸/水印）、信息量（过高或过低）、
    信息一致性（术语/数据/图文/无编造）。**不触碰配色/结构重排/内容增删**，只允许位置、
-   字号（±2pt 内）、间距、对齐、底衬调整。
+   字号（±2pt 内）、间距、对齐、底衬调整。预览图放临时目录，不交付。
 3. 有资料缺口时，交付时如实指出，不编造填充。
 4. 交付：只给 `.pptx` **绝对路径**；如需说明假设、模板继承回退或缺口，简短列出。
 
