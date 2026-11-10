@@ -259,7 +259,7 @@ def render_content(slide, s, style):
     chapter = s.get("chapter", "")
     add_text(slide, MARGIN_L, 0.5, 10.8, 0.6, title, size=25, bold=True)
     if chapter:
-        add_text(slide, PAGE_W - MARGIN_R - 3.4, 0.62, 3.4, 0.35, chapter, size=11,
+        add_text(slide, PAGE_W - MARGIN_R - 3.4, 0.2, 3.4, 0.3, chapter, size=11,
                  color=FAINT, align=PP_ALIGN.RIGHT)
     add_hline(slide, MARGIN_L, PAGE_W - MARGIN_R, 1.32, color=LINE, w=0.75)
     x, y0, w, h = content_area()
@@ -365,6 +365,10 @@ def _steps(slide, x, y, w, b, style):
     gap = 0.55
     cw = (w - gap * (n - 1)) / n
     h = 1.15
+    for it in items:
+        bb = it.get("body", "")
+        if bb:
+            h = max(h, 0.75 + text_height(bb, 11, cw - 0.3) + 0.15)
     for i, it in enumerate(items):
         cx = x + i * (cw + gap)
         add_rect(slide, cx, y, cw, h, PANEL)
@@ -460,7 +464,7 @@ def _table(slide, x, y, w, b, style):
         cell = tbl.cell(0, ci)
         cell.fill.solid()
         cell.fill.fore_color.rgb = PANEL
-        cell.margin_top = cell.margin_bottom = 0.04
+        cell.margin_top = cell.margin_bottom = Inches(0.04)
         p = cell.text_frame.paragraphs[0]
         r = p.add_run()
         r.text = str(hd)
@@ -470,7 +474,7 @@ def _table(slide, x, y, w, b, style):
             cell = tbl.cell(ri + 1, ci)
             cell.fill.solid()
             cell.fill.fore_color.rgb = WHITE if ri % 2 == 0 else PANEL
-            cell.margin_top = cell.margin_bottom = 0.03
+            cell.margin_top = cell.margin_bottom = Inches(0.03)
             p = cell.text_frame.paragraphs[0]
             r = p.add_run()
             r.text = str(row[ci]) if ci < len(row) else ""
@@ -499,15 +503,16 @@ def _split(slide, x, y, w, b, style):
     items = right.get("items", [])
     is_panel = right.get("kind") == "panel"
     if is_panel:
-        ih = min(0.5, 0.5)
-        ph = 0.5 + len(items) * 0.5 + 0.3
+        ihs = [text_height(str(it), 13, rw - 0.4) + 0.16 for it in items]
+        ihs = [max(0.5, v) for v in ihs]
+        ph = 0.5 + sum(ihs) + 0.3
         add_rect(slide, rx, y, rw, ph, ACCENT_LT)
         if rk:
             add_text(slide, rx + 0.2, y + 0.12, rw - 0.4, 0.3, rk, size=11, bold=True, color=ACCENT_DK)
         ry = y + 0.45
-        for it in items:
-            add_text(slide, rx + 0.2, ry, rw - 0.4, 0.4, str(it), size=13, color=TEXT)
-            ry += 0.5
+        for it, ih in zip(items, ihs):
+            add_text(slide, rx + 0.2, ry, rw - 0.4, ih, str(it), size=13, color=TEXT)
+            ry += ih
         h = max(h, ph)
     else:
         ry = y
@@ -527,10 +532,12 @@ def _callouts(slide, x, y, w, b, style):
     h = 0.0
     for it in items:
         ch = 0.85
+        body = it.get("body", "")
+        if body:
+            ch = max(ch, 0.55 + text_height(body, 12, w - 0.5) + 0.12)
         add_rect(slide, x, y + h, w, ch, PANEL)
         add_rect(slide, x, y + h, 0.06, ch, ACCENT)
         add_text(slide, x + 0.22, y + h + 0.12, w - 0.5, 0.3, it.get("title", ""), size=14, bold=True)
-        body = it.get("body", "")
         if body:
             add_text(slide, x + 0.22, y + h + 0.42, w - 0.5, ch - 0.5, body, size=12, color=SUBTLE,
                      line_spacing=1.15)
@@ -568,6 +575,7 @@ def _rows(slide, x, y, w, b, style):
         tag = it.get("tag", "")
         if tag:
             tw = 0.1 + len(tag) * 0.18
+            rh = max(rh, text_height(it.get("text", ""), 13, w - tw - 0.3) + 0.22)
             add_rect(slide, x, y + h, tw, rh, ACCENT_LT)
             add_text(slide, x, y + h + 0.06, tw, 0.3, tag, size=11, bold=True, color=ACCENT_DK,
                      align=PP_ALIGN.CENTER)
@@ -726,7 +734,61 @@ def _points(slide, x, y, w, b, style):
     return h
 
 
+BASE_DIR = Path.cwd()  # 图片 src 相对 deck.json 所在目录，main() 里覆盖
+
+
+def _figure(slide, x, y, w, b, style):
+    """资料原图 + 可选侧栏文字。图片等比缩放放入框内，不拉伸。"""
+    from PIL import Image
+    src = Path(b.get("src", ""))
+    if not src.is_absolute():
+        src = BASE_DIR / src
+    if not src.exists():
+        raise RuntimeError(f"figure 图片不存在: {src}")
+    with Image.open(src) as im:
+        pw, ph = im.size
+    aspect = pw / ph
+    caption = b.get("caption", "")
+    cap_h = 0.3 if caption else 0.0
+    box_h = float(b.get("height", CONTENT_BOTTOM - y - cap_h))
+    side = b.get("side")
+    gap = 0.35
+    iw = w * float(b.get("image_ratio", 0.62)) if side else w
+    tw = w - iw - gap
+    img_left = b.get("image_side", "right") == "left"
+    ix0 = x if (not side or img_left) else x + tw + gap
+    tx = x + iw + gap if img_left else x
+    dw = iw
+    dh = dw / aspect
+    if dh > box_h:
+        dh = box_h
+        dw = dh * aspect
+    ix = ix0 + (iw - dw) / 2 if not side else ix0
+    if side and img_left is False:
+        ix = ix0 + iw - dw
+    slide.shapes.add_picture(str(src), Inches(ix), Inches(y), Inches(dw), Inches(dh))
+    add_rect(slide, ix, y, dw, dh, None, line=LINE, line_w=0.5)
+    if caption:
+        add_text(slide, ix, y + dh + 0.07, dw, 0.25, caption, size=10, color=FAINT)
+    if side:
+        ty = y
+        if side.get("kicker"):
+            add_text(slide, tx, ty, tw, 0.3, side["kicker"], size=11, bold=True, color=FAINT)
+            ty += 0.35
+        if side.get("title"):
+            th = text_height(side["title"], 18, tw)
+            add_text(slide, tx, ty, tw, th + 0.1, side["title"], size=18, bold=True, line_spacing=1.15)
+            ty += th + 0.25
+        for it in side.get("items", []):
+            ih = text_height(str(it), 12, tw)
+            add_hline(slide, tx, tx + tw, ty - 0.06, color=LINE, w=0.5)
+            add_text(slide, tx, ty, tw, ih + 0.15, str(it), size=12, color=TEXT, line_spacing=1.25)
+            ty += ih + 0.22
+    return dh + cap_h
+
+
 BLOCK_RENDERERS = {
+    "figure": _figure,
     "lead": _lead,
     "insight": _insight,
     "stats": _stats,
@@ -952,6 +1014,8 @@ def main() -> int:
         sys.stderr.write("请先跑 deck_check.py 修好 deck.json 再渲染，禁止跳过。\n")
         return 1
 
+    global BASE_DIR
+    BASE_DIR = deck_path.resolve().parent
     source = deck.get("source", "")
     style = {"text": TEXT, "sub": SUBTLE, "accent": ACCENT, "panel": PANEL, "source": source}
 
