@@ -7,10 +7,11 @@ template summary (Markdown) consumed by the planning phase.
 
 Usage:
   python analyze_template.py <template.pptx> [-o 模板摘要.md]
+  python analyze_template.py <template.pptx> --slides-json   # 逐页清单，供模板模式选页写 map
 
 Exit codes:
   0 success
-  2 template unreadable / python-pptx missing
+  2 template unreadable / power-pptx missing
 """
 
 from __future__ import annotations
@@ -21,10 +22,10 @@ import sys
 from pathlib import Path
 
 try:
-    from pptx import Presentation
-    from pptx.util import Emu
+    from power_pptx import Presentation
+    from power_pptx.util import Emu
 except ImportError:
-    sys.stderr.write("python-pptx 未安装，请用 venv python 运行（见 README.md 快速上手）\n")
+    sys.stderr.write("power-pptx 未安装，请先 pip install -r requirements.txt（见 README.md）\n")
     raise SystemExit(2)
 
 THEME_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -95,6 +96,77 @@ def analyze(prs) -> dict:
     }
 
 
+def _shape_kind(sh) -> str:
+    if sh.shape_type is not None and "PICTURE" in str(sh.shape_type):
+        return "picture"
+    if getattr(sh, "has_table", False) and sh.has_table:
+        return "table"
+    if sh.has_text_frame:
+        return "text"
+    return "other"
+
+
+# officecli 路径里每类元素各自从 1 计数（shape[K] 只数 p:sp，connector[K] 只数 p:cxnSp，依此类推）
+_CATEGORY_BY_TAG = {"sp": "shape", "pic": "picture", "cxnSp": "connector", "grpSp": "group"}
+
+
+def _category(sh) -> str:
+    tag = sh._element.tag.rsplit("}", 1)[-1]
+    if tag == "graphicFrame":
+        return "table" if getattr(sh, "has_table", False) and sh.has_table else "chart"
+    return _CATEGORY_BY_TAG.get(tag, tag)
+
+
+def walk_shapes(shapes, parent_key: str = "", steps: tuple = (), depth: int = 0):
+    """深度优先遍历形状（含组合内子形状），逐个产出记录。
+
+    key：形状名；同一层有同名形状时写成 `名称#序号`（序号按 z 序从 1 起）；组合内的子形状写成
+    `组合key/子key`。steps：officecli 路径的逐级 (类别, 序号)，复制页后顺序与名称不变而 id 会重编，
+    所以按位置寻址才稳定。
+    """
+    names = [sh.name for sh in shapes]
+    seen, per_cat = {}, {}
+    for sh, name in zip(shapes, names):
+        seen[name] = seen.get(name, 0) + 1
+        label = f"{name}#{seen[name]}" if names.count(name) > 1 else name
+        key = f"{parent_key}/{label}" if parent_key else label
+        cat = _category(sh)
+        per_cat[cat] = per_cat.get(cat, 0) + 1
+        here = steps + ((cat, per_cat[cat]),)
+        kind = "group" if cat == "group" else _shape_kind(sh)
+        yield {"key": key, "name": name, "id": sh.shape_id, "category": cat, "kind": kind,
+               "steps": here, "depth": depth, "shape": sh}
+        if cat == "group":
+            yield from walk_shapes(list(sh.shapes), key, here, depth + 1)
+
+
+def slides_inventory(prs) -> list:
+    """逐页清单：页号、版式名、每个形状（含组合内子形状）的 key/name/id/类型/占位符/位置(EMU)/文字摘要。
+
+    组合子形状的位置是组合内坐标，不是页面坐标。
+    """
+    out = []
+    for i, s in enumerate(prs.slides, 1):
+        shapes = []
+        for rec in walk_shapes(list(s.shapes)):
+            sh = rec["shape"]
+            ph = None
+            if sh.is_placeholder:
+                try:
+                    ph = PH_TYPES.get(int(sh.placeholder_format.type), str(sh.placeholder_format.type))
+                except Exception:
+                    ph = "UNKNOWN"
+            text = sh.text_frame.text.strip().replace("\n", " / ")[:40] if sh.has_text_frame else ""
+            shapes.append({
+                "key": rec["key"], "depth": rec["depth"], "name": sh.name, "id": sh.shape_id,
+                "kind": rec["kind"], "placeholder": ph,
+                "left": sh.left, "top": sh.top, "width": sh.width, "height": sh.height,
+                "text": text,
+            })
+        out.append({"slide": i, "layout": s.slide_layout.name or "", "shapes": shapes})
+    return out
+
+
 def to_markdown(info: dict) -> str:
     lines = ["# 模板摘要", ""]
     w, h = info["slide_size_inches"]
@@ -132,6 +204,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("template")
     ap.add_argument("-o", "--output")
+    ap.add_argument("--slides-json", action="store_true", help="输出逐页清单 JSON 到 stdout")
     args = ap.parse_args()
     tpl = Path(args.template).expanduser()
     try:
@@ -139,6 +212,9 @@ def main() -> int:
     except Exception as e:
         sys.stderr.write(f"打开模板失败: {e}\n")
         return 2
+    if args.slides_json:
+        print(json.dumps(slides_inventory(prs), ensure_ascii=False, indent=2))
+        return 0
     info = analyze(prs)
     if args.output:
         out = Path(args.output).expanduser()

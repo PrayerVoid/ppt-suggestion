@@ -5,7 +5,11 @@ Checks the quality checklist in references/deck-schema.md §4. Run before
 render_pptx.py; the renderer also imports validate_deck() as a hard gate.
 
 Usage:
-  python deck_check.py deck.json
+  python deck_check.py deck.json [--extra-kinds kind1,kind2] [--template-mode]
+
+--extra-kinds 放行渲染器副本里新增的 block kind（如特殊版式拓展）。
+--template-mode 模板模式：版式由模板决定，跳过字数、版式种类、相邻页等版式类检查，
+                仅保留结构合法性、字段与行内公式 `$` 配对检查。
 
 Exit codes:
   0 valid
@@ -15,10 +19,22 @@ Exit codes:
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
+
+BUILTIN_KINDS = {
+    "agenda", "figure", "lead", "insight", "stats", "columns", "steps", "chips",
+    "layers", "table", "split", "callouts", "cards", "rows", "compare",
+    "pipeline", "hub", "timeline", "points", "formula",
+}
+NON_STRUCTURE_KINDS = {"lead", "insight", "chips"}
+MIN_KINDS = 5
+NON_TEXT_KEYS = {"latex", "kind", "type", "src", "image", "path", "file", "layout"}
+BARE_DOLLAR_RE = re.compile(r"(?<!\\)\$")
 
 
 def _collect_side(d: dict) -> list:
@@ -68,12 +84,40 @@ def collect_text(s: dict) -> list:
     return out
 
 
-def validate_deck(deck: dict) -> list:
+def _iter_strings(obj, path=""):
+    """递归取出 JSON 里所有文本字段及其路径；latex/kind/路径类字段不是正文，跳过。"""
+    if isinstance(obj, str):
+        yield path, obj
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            if k not in NON_TEXT_KEYS:
+                yield from _iter_strings(v, f"{path}.{k}" if path else k)
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from _iter_strings(v, f"{path}[{i}]")
+
+
+def _check_inline_math(slides) -> list:
+    """行内公式 `$...$` 的 `$` 必须成对；字面美元符号写成 `\\$`。"""
+    errs = []
+    for idx, s in enumerate(slides):
+        for path, text in _iter_strings(s):
+            n = len(BARE_DOLLAR_RE.findall(text))
+            if n % 2:
+                errs.append(f"第 {idx + 1} 页 {path} 的 $ 数量为奇数（{n}），行内公式未配对；字面美元符号写成 \\$：「{text[:30]}」")
+            elif "$$" in text.replace("\\$", ""):
+                errs.append(f"第 {idx + 1} 页 {path} 含空的行内公式 $$：「{text[:30]}」")
+    return errs
+
+
+def validate_deck(deck: dict, extra_kinds=(), template_mode=False) -> list:
     """Return a list of error strings; empty means valid."""
     errs = []
+    known_kinds = BUILTIN_KINDS | set(extra_kinds)
     slides = deck.get("slides")
     if not isinstance(slides, list) or not slides:
         return ["slides 为空或缺失"]
+    errs += _check_inline_math(slides)
     types = [s.get("type") for s in slides]
     has_section = "section" in types
     has_catalog = "catalog" in types
@@ -103,7 +147,12 @@ def validate_deck(deck: dict) -> list:
         for b in blocks:
             if any(k in b for k in ("color", "fontSize", "hex")):
                 errs.append(f"第 {idx + 1} 页 block 携带了视觉字段 color/fontSize/hex，禁止")
-        if s.get("type") == "content":
+            kind = b.get("kind") if isinstance(b, dict) else None
+            if kind not in known_kinds:
+                errs.append(f"第 {idx + 1} 页出现未知 block kind「{kind}」")
+            elif kind == "formula" and not str(b.get("latex", "")).strip():
+                errs.append(f"第 {idx + 1} 页 formula block 缺少 latex")
+        if s.get("type") == "content" and not template_mode:
             total = sum(len(str(x)) for x in collect_text(s))
             if total < 110:
                 errs.append(f"第 {idx + 1} 页正文总字数 {total} < 110")
@@ -125,27 +174,33 @@ def validate_deck(deck: dict) -> list:
             prev_cardish = bool(cardish)
         if s.get("type") == "content" and len(s.get("title", "")) < 8:
             errs.append(f"第 {idx + 1} 页标题过短（{len(s.get('title',''))} 字），疑似关键词标题，应为结论句")
+    if template_mode:
+        return errs
     if cards_pages > 2:
         errs.append(f"cards 页共 {cards_pages} 页 > 2")
     struct_kinds = {"layers", "steps", "rows", "pipeline", "hub", "timeline", "compare"}
     if len(set(seen_kinds) & struct_kinds) < 1 and any(t == "content" for t in types):
         errs.append("全稿没有结构页（layers/steps/rows/pipeline/hub/timeline/compare）")
-    if len(seen_kinds) < 3:
-        errs.append(f"全稿版式种类过少（{len(seen_kinds)} 种），至少 5 种")
+    counted = seen_kinds - NON_STRUCTURE_KINDS
+    if any(t == "content" for t in types) and len(counted) < MIN_KINDS:
+        errs.append(f"全稿版式种类过少（{len(counted)} 种，lead/insight/chips 不计），至少 {MIN_KINDS} 种")
     return errs
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        sys.stderr.write("usage: deck_check.py deck.json\n")
-        return 2
-    path = Path(sys.argv[1])
+    ap = argparse.ArgumentParser()
+    ap.add_argument("deck")
+    ap.add_argument("--extra-kinds", default="")
+    ap.add_argument("--template-mode", action="store_true")
+    args = ap.parse_args()
+    extra = {k.strip() for k in args.extra_kinds.split(",") if k.strip()}
+    path = Path(args.deck)
     try:
         deck = json.loads(path.read_text(encoding="utf-8"))
     except Exception as e:
         sys.stderr.write(f"deck.json 读取失败: {e}\n")
         return 2
-    errs = validate_deck(deck)
+    errs = validate_deck(deck, extra, args.template_mode)
     if errs:
         for e in errs:
             sys.stderr.write(f"✗ {e}\n")

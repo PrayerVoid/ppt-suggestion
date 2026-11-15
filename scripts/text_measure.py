@@ -17,7 +17,7 @@ the weights; defaults are 1.0 / 0.55.
 from __future__ import annotations
 
 import math
-
+import re
 CJK_WEIGHT = 1.0
 LATIN_WEIGHT = 0.55
 LINE_HEIGHT_FACTOR = 1.22
@@ -33,7 +33,16 @@ def char_weight(ch: str) -> float:
     return CJK_WEIGHT if ord(ch) > 0x2E80 else LATIN_WEIGHT
 
 
+_INLINE_MATH = re.compile(r"(?<!\\)\$(.+?)(?<!\\)\$")
+
+
+def _math_visible(m: re.Match) -> str:
+    """行内公式按可见字符估宽：命令算一个字符，去掉 {} ^ _ 等排版符号。"""
+    return re.sub(r"[{}^_\s]", "", re.sub(r"\\[A-Za-z]+", "x", m.group(1)))
+
+
 def effective_len(text: str) -> float:
+    text = _INLINE_MATH.sub(_math_visible, text).replace("\\$", "$")
     return sum(char_weight(c) for c in text)
 
 

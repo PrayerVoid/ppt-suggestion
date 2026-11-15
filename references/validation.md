@@ -1,4 +1,4 @@
-# 结果校验（阶段四使用）
+# 结果校验（阶段六使用）
 
 > 设计要求：输出自查覆盖排版（文字重叠/遮蔽、图形卡片列表交叠）、图片（模糊、拉伸变形、不清晰）、
 > 信息量（过低或过高）、信息一致性（错别字、术语一致、数据矛盾、图文不符、编造或无来源信息）；
@@ -16,8 +16,9 @@
 
 | 项             | 说明                                                                                     |
 | ---------------- | ------------------------------------------------------------------------------------------ |
-| 形状重叠       | 两形状实际占用区域相交面积 > 28% 小者（透明文本框按文字占用估算，面板内文字/装饰条豁免） |
+| 形状重叠       | 两形状实际占用区域相交面积 > 28% 小者（透明文本框按文字占用估算，面板内文字/装饰条豁免）。两个透明文本框都按"文字溢出框底后的真实占用"比较，所以标签折行压到下一段说明文字、`stats` 卡片文字压到后一个块都会报 Hard |
 | 元素越界       | 形状超出幻灯片画布边界                                                                   |
+| 公式未转换     | 任意文字（含组合形状、表格单元格）里还留着成对的 `$...$`，先跑 `formula.py`；`\$` 与单个孤立的 `$` 不算 |
 | 文本框溢出估算 | 按字号与宽度估算行数超过文本框高度 25% + 0.15 in                                         |
 | 零尺寸形状     | 有填充但宽高 ≤ 0.01 in                                                                  |
 | 图片纵横比失真 | 显示比例与原生比例偏差 > 10%                                                             |
@@ -25,7 +26,19 @@
 | 连续同版式     | 相邻正文页 block 版式完全相同（配 --deck 时）                                            |
 | 页数不一致     | deck 页数与 pptx 页数不符（配 --deck 时）                                                |
 
+### 模板模式：`--baseline`
+
+模板自带的装饰形状可能本来就出血越界或互相重叠，这些不是内容造成的。模板模式校验时加上原模板：
+
+```
+python scripts/validate_pptx.py "<输出的.pptx>" --baseline "<模板.pptx>"
+```
+
+越界、重叠问题若在原模板里以同样的形状名和位置（取整到 0.1 in）出现过，就不计入 Hard，改在报告末尾列为"模板自带，已忽略 N 项"。其余检查不受影响。模板模式没有 `--deck` 的 block 信息时，版式签名比较自动跳过。
+
 ### Soft（--strict 时也失败）
+
+名为 `FORMULA_` 开头的占位框、含原生公式（`m:oMath`）的形状不参与文字溢出估算，`DECO_` 开头的装饰形状不参与重叠与溢出检查，越界检查对它们仍然生效。公式显示是否正常以出图为准。
 
 
 | 项                | 说明                               |
@@ -38,29 +51,22 @@
 ### 2.0 先把每页渲染成图片
 
 ```
-python <venv-python> scripts/render_preview.py "<输出的.pptx>" -o /tmp/ppt_preview --sheet
+python scripts/render_preview.py "<输出的.pptx>" -o <系统临时目录>/ppt_preview --sheet
 ```
 
-然后用 Read 工具看 `/tmp/ppt_preview/sheetN.png`（每张 2x2 共 4 页），有疑点的页再看单页 `sNN.png`。预览放系统临时目录，不要放进交付文件夹。
+然后用 Read 工具看 `sheetN.png`（每张 2x2 共 4 页），有疑点的页再看单页 `sNN.png`。预览放系统临时目录（如 Python `tempfile.gettempdir()`），不要放进交付文件夹。
 
-`render_preview.py` 有两个引擎，默认 `--engine auto`，先试 Aspose，失败自动退回内置近似渲染：
+`render_preview.py` 默认 `--engine auto`：用 officecli 逐页截图；找不到 officecli 时退回内置近似渲染。stderr 会打印实际使用的引擎。
 
+| 引擎 / 渲染 | 前提 | 效果 |
+| --- | --- | --- |
+| `officecli` + `--render html`（默认） | 已装 officecli 与 Edge/Chrome 等浏览器 | 跨平台、结果可复现，字体、换行、图表能看到。**原生公式会画成 LaTeX 源码文字**（实测），公式页不能用它判断公式是否正确；还会多画母版里的日期/页码占位，这两点都是渲染假象，不是 pptx 里的内容 |
+| `officecli` + `--render native` | Windows 且已安装 PowerPoint | 调用 PowerPoint 真实渲染，公式按数学排版显示，没有多余占位，最保真，也更慢（11 页约 1 分钟） |
+| `pillow` | 只要 power_pptx + Pillow | 按形状位置近似绘制，看不到公式（原生公式形状会被跳过并在 stderr 提示）和动画，字体和换行与 PowerPoint 有出入。能看出重叠、溢出、失衡 |
 
-| 引擎     | 前提                                                                                                                                                                            | 效果                                                                                       |
-| ---------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `aspose` | `aspose-slides`（国内用清华源安装）；Linux/macOS 还要系统装 libgdiplus。缺 libgdiplus 时报 `type initializer for 'Gdip' threw an exception`；免费评估模式图上有 Evaluation 水印 | 接近 PowerPoint，字体回退、换行、图片都真实；能暴露近似渲染看不出的问题（如形状默认阴影）  |
-| `pillow` | 只要 python-pptx + Pillow                                                                                                                                                       | 按形状位置近似绘制，字体和换行与 PowerPoint 有出入。能看出重叠、溢出、失衡，看不出字体细节 |
+含公式的页用 `--render native` 出图复核；没有 PowerPoint 时，html 只能检查公式框的位置与大小，公式本身是否排对要在交付说明里写明"未经真实渲染"，并让用户在 PowerPoint 里打开确认。
 
-stderr 会打印实际使用的引擎。用了 `pillow` 引擎时，交付说明里要写明"未经 PowerPoint 真实渲染"。
-
-**macOS 处理路径**
-
-1. 有 Homebrew：`brew install mono-libgdiplus`，然后直接跑 `render_preview.py`。
-2. 没有 Homebrew：跑 `bash scripts/setup_libgdiplus_macos.sh`（需要 Xcode Command Line Tools，不需要管理员权限，约 3–5 分钟）。
-   脚本用 micromamba 从清华 conda-forge 镜像装 cairo、pango、glib 等依赖，再用 Mono 官方源码包只编译 `src/`，
-   装到 `~/.comate-engine/gdip/`。conda-forge 本身没有 libgdiplus；GitHub 源码包缺子模块会编译失败，所以用官方发布包。
-3. 装好后 `render_preview.py` 会自动带上 `DYLD_LIBRARY_PATH` 重启自己，不用手动设变量。手动用时：`export DYLD_LIBRARY_PATH=~/.comate-engine/gdip/lib`。
-4. PowerPoint 的 AppleScript 导出在沙盒里不产出文件，不要走这条路。
+用了 `pillow` 引擎时，交付说明里要写明"未经真实渲染"。officecli 的常驻进程会延迟落盘，脚本已在读文件前 close，手动调用 officecli 改过文件后同样要先执行 `officecli close <文件>`。
 
 看图时重点查：标题与正文是否重叠、说明文字是否压住图片或相邻文字、内容是否全挤在一侧、页边装饰是否遮字、图片是否变形、形状是否带阴影。
 
@@ -91,7 +97,7 @@ stderr 会打印实际使用的引擎。用了 `pillow` 引擎时，交付说明
 
 ### 不触碰
 
-- 配色、字体等**品牌级决策**不改（要改回阶段一/改渲染器常量，全稿统一改）。
+- 配色、字体等**品牌级决策**不改（要改就回阶段三改渲染器副本的常量，全稿统一改）。采样配色的 seed 记在 `style.json`，可复现。
 - **结构重排**（列数、图表类型、章节）不在此阶段做。
 - **内容增删**不做——本阶段只允许位置、字号（角色锚点 ±2pt 内）、间距、对齐、底衬调整。
 - 文字提炼不得改变原意。
@@ -103,8 +109,9 @@ stderr 会打印实际使用的引擎。用了 `pillow` 引擎时，交付说明
 | ----------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------- |
 | 内容/文案问题（错字、术语、数据、句子 AI 味） | 改 `deck.json`（必要时改 `STORY.md`）                    | 跑 `deck_check.py` → 重渲染 → 重校验 |
 | 版式问题（重叠、越界、溢出、版式单调）        | 改 `deck.json` 的 layout/block 安排                      | 同上                                   |
-| 渲染器 bug / 视觉规则不符                     | 改 `scripts/render_pptx.py` 或 `text_measure.py`         | 重渲染该页或全稿                       |
-| 模板继承问题                                  | 检查模板分析是否正确，调整 deck.json 的 type/layout 匹配 | 重新渲染                               |
+| 渲染器 bug / 视觉规则不符                     | 改项目里的渲染器副本（`渲染器/render_pptx.py`、`text_measure.py`）；全局性缺陷同时改 skill 原件 | 重渲染该页或全稿                       |
+| 模板继承问题                                  | 检查模板分析与页面映射是否正确，调整对应的模板原页 | 重新跑 `template_fill.py` |
+| 公式显示异常                                  | 检查 `formula` 的 LaTeX，重新渲染后再跑 `formula.py` | 重渲染并重校验 |
 
-每次修复后重跑：`deck_check.py deck.json` → `render_pptx.py` → `validate_pptx.py`，直到 **Hard 为零**（Soft 允许，但 `--strict` 场景除外）。
+每次修复后重跑：`渲染器/deck_check.py deck.json` → `渲染器/render_pptx.py` →（有公式）`formula.py` → `validate_pptx.py`，直到 **Hard 为零**（Soft 允许，但 `--strict` 场景除外）。
 交付时如实说明资料缺口与假设。

@@ -2,11 +2,13 @@
 """Mechanical validation for a rendered PPTX (ppt-suggestion phase 4).
 
 Checks per slide: shape overlap, out-of-bounds, estimated text overflow,
-empty shapes, image distortion / low resolution, layout repetition, and
-(optionally, with --deck) slide count and per-slide block signature.
+empty shapes, image distortion / low resolution, unconverted inline `$...$`
+formulas, layout repetition, and (optionally, with --deck) slide count and
+per-slide block signature. With --baseline (template mode) out-of-bounds shapes
+that the template itself already has are reported as Info, not Hard.
 
 Usage:
-  python validate_pptx.py <out.pptx> [--deck deck.json] [--strict]
+  python validate_pptx.py <out.pptx> [--deck deck.json] [--baseline template.pptx] [--strict]
 
 Exit codes:
   0  no errors (warnings allowed unless --strict)
@@ -19,13 +21,14 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 from pathlib import Path
 
 try:
-    from pptx import Presentation
+    from power_pptx import Presentation
 except ImportError:
-    sys.stderr.write("python-pptx 未安装，请用 venv python 运行本脚本\n")
+    sys.stderr.write("power-pptx 未安装，请用 .venv 的 python 运行本脚本（pip install -r requirements.txt）\n")
     raise SystemExit(2)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -38,6 +41,28 @@ PX_PER_IN = 96.0
 
 def _inches(v) -> float:
     return (v or 0) / EMU_IN
+
+
+def is_deco(sh) -> bool:
+    return (getattr(sh, "name", "") or "").startswith("DECO_")
+
+
+def is_formula(sh) -> bool:
+    """公式占位框（FORMULA_ 前缀）或已替换的原生公式（含 m:oMath / a14:m）。"""
+    if (getattr(sh, "name", "") or "").startswith("FORMULA_"):
+        return True
+    try:
+        return bool(sh._element.xpath('.//*[local-name()="oMath" or local-name()="m"]'))
+    except Exception:
+        return False
+
+
+def is_picture(sh) -> bool:
+    """原生公式等无预设几何的形状取 shape_type 会抛 NotImplementedError。"""
+    try:
+        return sh.shape_type == 13
+    except NotImplementedError:
+        return False
 
 
 def bbox(sh):
@@ -83,12 +108,14 @@ def estimate_text_height(tf, width_in: float) -> float:
     return total
 
 
-def occupied_bbox(sh):
+def occupied_bbox(sh, clamp_h=True):
     """(x, y, w, h) of the region actually occupied by visible content.
 
     Filled shapes occupy their whole box; transparent text boxes occupy only
     the estimated text footprint, so two side-by-side boxes whose text doesn't
-    collide are not reported as overlapping.
+    collide are not reported as overlapping. clamp_h=False keeps the footprint
+    of text that spills past the bottom of its box, which is where it really
+    collides with whatever sits below.
     """
     x, y, w, h = bbox(sh)
     if has_visible_fill(sh):
@@ -114,7 +141,7 @@ def occupied_bbox(sh):
             ls = p.line_spacing if p.line_spacing else 1.15
             mult = ls if isinstance(ls, float) else 1.15
             total_h += lines * size * 1.22 * mult / 72.0
-        return x, y, min(w, max_w), min(h, total_h)
+        return x, y, min(w, max_w), min(h, total_h) if clamp_h else total_h
     except Exception:
         return x, y, w, h
 
@@ -125,9 +152,59 @@ def _contains(a, b):
             and a[0] + a[2] >= b[0] + b[2] and a[1] + a[3] >= b[1] + b[3])
 
 
-def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h):
+INLINE_FORMULA_RE = re.compile(r"(?<!\\)\$[^$\n\v]+?(?<!\\)\$")
+A_NS = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+
+
+def find_unconverted_inline(slide):
+    """段落文字里仍带成对 `$...$` 的片段（含组合形状、表格单元格）。"""
+    found = []
+    for sh in slide.shapes:
+        if is_formula(sh):
+            continue
+        for p in sh._element.iter(f"{A_NS}p"):
+            text = "".join(t.text or "" for r in p.findall(f"{A_NS}r") for t in r.findall(f"{A_NS}t"))
+            m = INLINE_FORMULA_RE.search(text)
+            if m:
+                found.append(m.group(0)[:20])
+    return found
+
+
+def oob_key(sh):
+    """比对键：形状名 + 取整 bbox（模板页复制后页序会变，不含页号）。"""
+    x, y, w, h = bbox(sh)
+    return (getattr(sh, "name", "") or "", round(x, 1), round(y, 1), round(w, 1), round(h, 1))
+
+
+def is_out_of_bounds(sh, page_w, page_h):
+    x, y, w, h = bbox(sh)
+    if w <= 0 and h <= 0:
+        return False
+    return x < -0.05 or y < -0.05 or x + w > page_w + 0.05 or y + h > page_h + 0.05
+
+
+def collect_baseline(prs):
+    """模板自带的越界 / 重叠问题键集合，供 --baseline 把它们降为说明项。"""
+    seen = set()
+    pw, ph = _inches(prs.slide_width), _inches(prs.slide_height)
+    for i, slide in enumerate(prs.slides, start=1):
+        check_slide(slide, i, None, [], [], pw, ph, seen=seen)
+    return frozenset(seen)
+
+
+def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h,
+                baseline=frozenset(), infos=None, seen=None):
     shapes = list(slide.shapes)
     visible = [sh for sh in shapes if has_visible_fill(sh) or has_text(sh)]
+
+    def report(key, msg):
+        """越界 / 重叠：键在 baseline（模板自带）里就降为说明项。"""
+        if seen is not None:
+            seen.add(key)
+        if infos is not None and key in baseline:
+            infos.append(msg)
+        else:
+            issues.append(msg)
 
     # 1) overlap among non-placeholder shapes (on occupied regions)
     for i in range(len(shapes)):
@@ -135,7 +212,12 @@ def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h):
             a, b = shapes[i], shapes[j]
             if getattr(a, "is_placeholder", False) or getattr(b, "is_placeholder", False):
                 continue
+            if is_deco(a) or is_deco(b):
+                continue
             oa, ob = occupied_bbox(a), occupied_bbox(b)
+            if (has_text(a) and has_text(b)
+                    and not has_visible_fill(a) and not has_visible_fill(b)):
+                oa, ob = occupied_bbox(a, clamp_h=False), occupied_bbox(b, clamp_h=False)
             if oa[2] <= 0 or oa[3] <= 0 or ob[2] <= 0 or ob[3] <= 0:
                 continue
             ix = max(0.0, min(oa[0] + oa[2], ob[0] + ob[2]) - max(oa[0], ob[0]))
@@ -152,23 +234,28 @@ def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h):
                                       (oa[2] * oa[3]) / (ob[2] * ob[3]) < 0.18):
                 continue
             if inter / small > 0.28:
-                issues.append(f"第 {sidx} 页: 形状重叠 ({_n(inter)} in²) 于 "
-                              f"({_n(oa[0])}, {_n(oa[1])}) 与 ({_n(ob[0])}, {_n(ob[1])})")
+                report(("overlap",) + tuple(sorted((oob_key(a), oob_key(b)))),
+                       f"第 {sidx} 页: 形状重叠 ({_n(inter)} in²) 于 "
+                       f"({_n(oa[0])}, {_n(oa[1])}) 与 ({_n(ob[0])}, {_n(ob[1])})")
 
-    # 2) out of bounds
+    # 2) out of bounds（模板自带的越界形状只作说明，不算 Hard）
     for sh in shapes:
-        x, y, w, h = bbox(sh)
-        if w <= 0 and h <= 0:
+        if not is_out_of_bounds(sh, page_w, page_h):
             continue
-        if x < -0.05 or y < -0.05 or x + w > page_w + 0.05 or y + h > page_h + 0.05:
-            txt = (sh.text_frame.text[:14] if has_text(sh) else sh.shape_type)
-            issues.append(f"第 {sidx} 页: 元素越界「{txt}」({_n(x + w)}, {_n(y + h)}) 超出页面 "
-                          f"({_n(page_w)} × {_n(page_h)})")
+        x, y, w, h = bbox(sh)
+        txt = sh.text_frame.text[:14] if has_text(sh) else sh.name
+        report(("oob", oob_key(sh)),
+               f"第 {sidx} 页: 元素越界「{txt}」({_n(x + w)}, {_n(y + h)}) 超出页面 "
+               f"({_n(page_w)} × {_n(page_h)})")
+
+    # 2b) inline formulas that formula.py has not converted yet
+    for frag in find_unconverted_inline(slide):
+        issues.append(f"第 {sidx} 页: 公式未转换，请先跑 formula.py（残留「{frag}」）")
 
     # 3) text overflow estimate (Hard beyond 25%+0.15in, Soft otherwise)
     for sh in shapes:
         try:
-            if not sh.has_text_frame:
+            if not sh.has_text_frame or is_formula(sh) or is_deco(sh):
                 continue
             tf = sh.text_frame
             if not tf.text.strip():
@@ -196,7 +283,7 @@ def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h):
 
     # 5) pictures
     for sh in shapes:
-        if sh.shape_type != 13:  # PICTURE
+        if not is_picture(sh):
             continue
         try:
             x, y, w, h = bbox(sh)
@@ -236,6 +323,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("pptx")
     ap.add_argument("--deck")
+    ap.add_argument("--baseline", help="模板 .pptx；与之相同的越界形状不计入 Hard")
     ap.add_argument("--strict", action="store_true")
     args = ap.parse_args()
 
@@ -245,6 +333,14 @@ def main() -> int:
     except Exception as e:
         sys.stderr.write(f"打开 {out_path} 失败: {e}\n")
         return 2
+
+    baseline = frozenset()
+    if args.baseline:
+        try:
+            baseline = collect_baseline(Presentation(str(Path(args.baseline).expanduser().resolve())))
+        except Exception as e:
+            sys.stderr.write(f"打开 baseline {args.baseline} 失败: {e}\n")
+            return 2
 
     deck = None
     if args.deck:
@@ -259,12 +355,12 @@ def main() -> int:
         sys.stderr.write(f"✗ 页数不一致: deck {len(deck_slides)} 页 vs pptx {len(prs.slides)} 页\n")
         return 1
 
-    issues, warnings = [], []
+    issues, warnings, infos = [], [], []
     signatures = []
     page_w, page_h = _inches(prs.slide_width), _inches(prs.slide_height)
     for i, slide in enumerate(prs.slides, start=1):
         ds = deck_slides[i - 1] if deck_slides else None
-        sig = check_slide(slide, i, ds, issues, warnings, page_w, page_h)
+        sig = check_slide(slide, i, ds, issues, warnings, page_w, page_h, baseline, infos)
         if sig and sig[1]:
             signatures.append(sig)
 
@@ -288,6 +384,10 @@ def main() -> int:
             lines.append(f"- {e}")
     if not issues and not warnings:
         lines.append("\n- 未发现机械问题。")
+    if infos:
+        lines.append(f"\n## 模板自带，已忽略 {len(infos)} 项（越界 / 重叠）")
+        for e in infos:
+            lines.append(f"- {e}")
     report_txt = "\n".join(lines)
     report_path = out_path.with_name(f"{out_path.stem}.校验报告.md")
     report_path.write_text(report_txt, encoding="utf-8")

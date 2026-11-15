@@ -8,88 +8,114 @@
 
 - 最终效果像该领域专业人士手工制作，**没有明显的 AI 生成痕迹**（视觉与文案双重去 AI 味）。
 - 术语、名称、单位、数字与原始资料**完全一致**，不虚构、不夸大。
-- 有模板时**严格继承模板**的设计语言（页面比例 / 母版版式 / 配色 / 装饰），而不是另起炉灶。
-- 输出全部为**原生可编辑对象**，可直接在 PowerPoint / WPS 中改字、改表、改图。
+- 用户要求完全遵循模板时，用 officecli 直接编辑模板副本，继承模板的设计语言。
+- 输出全部为**原生可编辑对象**，包括数学公式（PowerPoint 内可直接编辑的 OMML 公式）。
+- 配色与版式由随机采样器给出候选，AI 保留最终裁量，避免千篇一律。
 
-## 工作流（四阶段，严格串行）
+## 工作流（六阶段，严格串行）
 
 ```
-① 阅读材料 ──► ② 生成内容规划 ──► ③ 排版渲染 ──► ④ 结果校验
-   素材转换        叙事(去AI味)       白底极简/模板继承    机械+人工复核
-   模板分析        大纲确认         deck_check       修复回路
+① 阅读材料 ─► ② 询问用户 ─► ③ 设置基本版式 ─► ④ 生成内容与微调版式 ─► ⑤ 排版渲染 ─► ⑥ 结果校验
+   素材转换      模板/快速/图片    随机采样配色       STORY + deck.json        渲染器副本/      机械校验 +
+   模板分析      /拓展             复制渲染器副本     去AI味 + 大纲确认        模板填充/公式    officecli 出图
 ```
 
-
-| 阶段            | 做什么                                                | 产物                         | 门禁                         |
-| ----------------- | ------------------------------------------------------- | ------------------------------ | ------------------------------ |
-| ① 阅读材料     | 转 Markdown、判断领域、模板分析、充分性检查           | `材料摘要.md`、`模板摘要.md` | 资料缺口先问用户，绝不臆造   |
-| ② 生成内容规划 | 意图→骨架→逐页结论句；全量去 AI 味改写              | `STORY.md`、`deck.json`      | 大纲确认（用户没反对再往下） |
-| ③ 排版渲染     | `deck_check.py` 校验 → `render_pptx.py` 渲染         | `<中文名>.pptx`              | 校验失败禁止跳过             |
-| ④ 结果校验     | `validate_pptx.py` + `render_preview.py` 出图逐页复核 | `校验报告.md`                | 修复闭环后交付               |
+| 阶段 | 做什么 | 产物 | 门禁 |
+| --- | --- | --- | --- |
+| ① 阅读材料 | 转 Markdown、判断领域、模板分析、充分性检查 | `材料摘要.md`、`模板摘要.md` | 资料缺口先问用户，绝不臆造 |
+| ② 询问用户 | 场合受众页数；是否完全遵循模板、快速模式、复用资料图片、可选拓展 | 记入 `材料摘要.md` | ⛔ 一次问完 |
+| ③ 设置基本版式 | `sample_style.py` 采样配色与版式，复制渲染器三件套并改常量 | `渲染器/`、`style.json` | 配色确认（快速模式跳过） |
+| ④ 生成内容与微调版式 | 意图→骨架→逐页；全量去 AI 味；`deck_check.py` | `STORY.md`、`deck.json` | 大纲确认（快速模式跳过） |
+| ⑤ 排版渲染 | 渲染器副本 / `template_fill.py` → `formula.py` → 可选拓展 | `<中文名>.pptx` | 校验失败禁止跳过 |
+| ⑥ 结果校验 | `validate_pptx.py` + `render_preview.py` 出图逐页复核 | `校验报告.md` | 修复闭环后交付 |
 
 ## 目录结构
 
 ```
 ppt-suggestion/
-├── README.md                # 本文件：skill 使用说明
-├── SKILL.md                 # 工作流总控：四阶段流程、门禁、纪律、文件导航
+├── README.md                # 本文件
+├── SKILL.md                 # 工作流总控：六阶段、门禁、纪律、文件导航
+├── requirements.txt         # Python 依赖（国内走清华源）
 ├── references/
 │   ├── source-intake.md     # 阶段一：阅读材料
-│   ├── story.md             # 阶段二-叙事：意图/骨架/逐页/版式选用
-│   ├── humanize.md          # 阶段二-去 AI 味：全量规则（24 类模式 + 清单）
+│   ├── story.md             # 阶段四：意图/骨架/逐页/版式选用
+│   ├── humanize.md          # 阶段四：去 AI 味全量规则
 │   ├── deck-schema.md       # deck.json 结构说明与质量检查清单
-│   ├── design.md            # 视觉/版面/密度边界
-│   ├── template-inherit.md  # 模板继承规则与渲染器模板模式
-│   └── validation.md        # 阶段四：结果校验（Hard/Soft 分级）
-└── scripts/
-    ├── source_to_md.py      # HTML/URL/文本 → Markdown
-    ├── analyze_template.py  # 模板分析 → 模板摘要
-    ├── deck_check.py        # deck.json 结构校验（渲染前）
-    ├── render_pptx.py       # 渲染器（无模板白底 / 有模板继承）
-    ├── validate_pptx.py     # 输出校验（重叠/越界/溢出/图片/版式）
-    ├── render_preview.py    # pptx 逐页转 PNG 供目视自查（Aspose 优先，自动退回 Pillow 近似渲染）
-    ├── setup_libgdiplus_macos.sh  # macOS 无 Homebrew 时编译 libgdiplus，让 Aspose 可用
-    └── text_measure.py      # 文本估算（renderer/validator 共用）
+│   ├── design.md            # 视觉/版面/密度边界（采样先验 + 硬约束）
+│   ├── template-inherit.md  # 模板模式：officecli 编辑模板副本
+│   └── validation.md        # 阶段六：结果校验（Hard/Soft 分级）
+├── scripts/
+│   ├── source_to_md.py      # HTML/URL/文本 → Markdown
+│   ├── analyze_template.py  # 模板分析 → 模板摘要
+│   ├── sample_style.py      # 配色 / 基本版式 / 内容版式随机采样器
+│   ├── deck_check.py        # deck.json 结构校验（渲染前）
+│   ├── render_pptx.py       # 渲染器原件（阶段三复制到项目里使用）
+│   ├── text_measure.py      # 文本估算（渲染器/校验共用）
+│   ├── template_fill.py     # 模板模式：复制模板原页并填充
+│   ├── formula.py           # 把公式占位框换成原生可编辑公式
+│   ├── ocli.py              # officecli 调用封装（定位二进制、batch、落盘）
+│   ├── validate_pptx.py     # 输出校验（重叠/越界/溢出/图片/版式）
+│   └── render_preview.py    # pptx 逐页转 PNG 供目视自查
+└── extensions/              # 可选拓展，默认关闭，用户选了才读
+    ├── README.md            # 拓展索引
+    ├── animation/           # 动效：转场 + 入场（power_pptx）
+    ├── geometry-deco/       # 几何装饰
+    └── special-layout/      # 特殊排版：bignum、asym
 ```
+
+## 安装
+
+```bash
+python -m venv .venv
+.venv/Scripts/python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt   # macOS/Linux 用 .venv/bin/python
+.venv/Scripts/python -m officecli install
+```
+
+- Python 包（`power-pptx`、`officecli-sdk`、`lxml`、`Pillow`）国内走清华源 `https://pypi.tuna.tsinghua.edu.cn/simple`。`power-pptx` 的导入名是 `power_pptx`。
+- `python -m officecli install` 运行官方安装脚本，从 `d.officecli.ai` 或 GitHub 下载 officecli 二进制，国内可能超时。清华源、npm 镜像和 Gitee 镜像（`gitee.com/zhu_evan/OfficeCLI` 只有源码、没有发行版）都不提供二进制。
+- 下载失败时手动安装：到 <https://github.com/iOfficeAI/OfficeCLI/releases> 下载本平台文件（Windows 为 `officecli-win-x64.exe`，其它平台见同页文件名），对照同页 `SHA256SUMS` 校验，放到 `%LOCALAPPDATA%\OfficeCLI\officecli.exe`（Windows）或 `~/.local/bin/officecli`（macOS/Linux）。`scripts/ocli.py` 会先查 PATH，再查这两个位置。
 
 ## 快速上手
 
 ```bash
-# 1. 阅读材料（源文件转 Markdown）
-python <venv>/bin/python .comate/skills/ppt-suggestion/scripts/source_to_md.py 参考资料.html -o 材料.md
+# 1. 阅读材料（源文件转 Markdown）；有模板时分析模板
+python scripts/source_to_md.py 参考资料.html -o 材料.md
+python scripts/analyze_template.py 模板.pptx -o 模板摘要.md
 
-# 2. 有模板时先分析模板
-python <venv>/bin/python .comate/skills/ppt-suggestion/scripts/analyze_template.py 模板.pptx -o 模板摘要.md
+# 2. 设置基本版式：采样配色/版式，复制渲染器三件套并套用常量
+python scripts/sample_style.py --seed 7 --count 3 --scene 工程 --pages 12
+python scripts/sample_style.py --seed 7 --emit-constants 1
 
-# 3. 渲染前校验 deck.json
-python <venv>/bin/python .comate/skills/ppt-suggestion/scripts/deck_check.py deck.json
+# 3. 渲染前校验 deck.json（用渲染器副本里的 deck_check.py）
+python 渲染器/deck_check.py deck.json
 
-# 4. 渲染（无模板白底；有模板加 --template）
-python <venv>/bin/python .comate/skills/ppt-suggestion/scripts/render_pptx.py --input deck.json --output 汇报.pptx
-python <venv>/bin/python .comate/skills/ppt-suggestion/scripts/render_pptx.py --input deck.json --output 汇报.pptx --template 模板.pptx
+# 4. 渲染；deck 含公式时再替换为原生公式
+python 渲染器/render_pptx.py --input deck.json --output 汇报.pptx
+python scripts/formula.py 汇报.pptx
 
-# 5. 校验产出
-python <venv>/bin/python .comate/skills/ppt-suggestion/scripts/validate_pptx.py 汇报.pptx --deck deck.json
-
-# 6. 渲染成图片目视自查（Aspose 优先，不可用时自动退回 Pillow 近似渲染）
-python <venv>/bin/python .comate/skills/ppt-suggestion/scripts/render_preview.py 汇报.pptx -o /tmp/ppt_preview --sheet
+# 5. 校验与出图自查
+python scripts/validate_pptx.py 汇报.pptx --deck deck.json
+python scripts/render_preview.py 汇报.pptx -o <临时目录>/ppt_preview --sheet
 ```
+
+### 公式
+
+`formula` block 的 `latex` 字段直接写 LaTeX。渲染器画一个 `FORMULA_<序号>` 占位文本框，并写出 `<输出名>.formulas.json`；
+`formula.py` 用 officecli 在原位置新增公式对象并删除占位框，结果是 PowerPoint 内可编辑的原生公式（OMML）。
+写入失败整批回滚、非 0 退出，不会降级成图片。
 
 ### 预览渲染说明
 
-- `--engine auto`（默认）先试 Aspose.Slides，失败退回 Pillow；也可用 `--engine aspose|pillow` 指定。
-- Aspose 安装（国内走清华源）：`uv pip install --python <venv>/bin/python -i https://pypi.tuna.tsinghua.edu.cn/simple aspose-slides`。
-  Linux/macOS 还需要 libgdiplus（macOS：`brew install mono-libgdiplus`），否则报
-  `The type initializer for 'Gdip' threw an exception`。免费评估模式图上有水印，预览图不交付。
-- macOS、无 Homebrew的处理路径：运行 `bash scripts/setup_libgdiplus_macos.sh`，用 micromamba 装依赖并从
-  Mono 官方源码包编译 libgdiplus 到 `~/.comate-engine/gdip/`（不需要管理员权限，约 3–5 分钟，需 Xcode CLT）。
-  装好后 `render_preview.py` 自动带上 `DYLD_LIBRARY_PATH`。
-  有 Homebrew 的机器直接 `brew install mono-libgdiplus` 即可。conda-forge 没有 libgdiplus，GitHub 源码包缺子模块，都不可用。
-- Pillow 引擎能看出重叠、溢出、内容失衡，字体和换行与 PowerPoint 有出入。
+- `render_preview.py` 默认 `--engine auto`，用 officecli 逐页截图；`--render auto|html|native` 选 officecli 的渲染路径，默认 `html`（跨平台，结果可复现）。
+- `html` 渲染会多画母版里的日期/页码占位，是渲染假象，不是 pptx 里的内容。`native` 调用本机 PowerPoint（仅 Windows 且已安装），最贴近真实效果，也更慢。
+- `--engine pillow` 是无 officecli 时的近似兜底，看不到公式和动画，用了它交付时要说明"未经真实渲染"。
+- officecli 常驻进程会延迟落盘，其他程序读文件前需要先 close；`ocli.py` 与各脚本已处理。
 
 ## 定制指南
 
-- **改设计规范**：按需调整 `references/design.md`（视觉/密度）、`references/template-inherit.md`（模板继承）、`references/source-intake.md`（阅读材料）等。
-- **改视觉**：无模板的配色/字号/间距全部集中在 `scripts/render_pptx.py` 顶部常量，JSON 里不允许出现颜色字段——要改风格就改这里。
+- **改设计规范**：调整 `references/design.md`（视觉/密度）、`references/template-inherit.md`（模板模式）、`references/source-intake.md`（阅读材料）等。
+- **改视觉**：无模板的配色/字号/间距集中在渲染器顶部常量，JSON 里不允许出现颜色字段。阶段三把渲染器复制到项目后改副本，不改原件。
+- **改采样分布**：`sample_style.py` 顶部的权重倍数常量，每项注明对应的文档规则。
 - **改校验强度**：`validate_pptx.py` 用 `--strict` 让警告也失败；调整阈值在脚本内常量。
-- **新增版式**：在 `render_pptx.py` 的 `BLOCK_RENDERERS` 里加一个渲染函数，并在 `deck-schema.md` 登记。
+- **新增版式**：在渲染器的 `BLOCK_RENDERERS` 里加一个渲染函数，并在 `deck-schema.md` 登记；渲染前校验用 `--extra-kinds` 放行。
+- **新增拓展**：在 `extensions/` 下建子目录，写 `EXT.md`，并登记到 `extensions/README.md`。

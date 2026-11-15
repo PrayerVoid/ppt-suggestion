@@ -1,0 +1,33 @@
+# 拓展：动效（转场 + 入场）
+
+仅在用户选了"动效"时使用。对**成品 pptx 后处理**，输出新文件，不改原件。依赖 `power_pptx`（只用来设转场、读写文件）。
+
+## 用法
+
+```
+python extensions/animation/apply_animation.py 成品.pptx --deck deck.json --out 成品_动效.pptx \
+    [--transition fade|push|morph|none] [--entrance fade|wipe|appear|none] [--com-check]
+```
+
+默认：转场 `fade`（500 ms）、入场 `fade`、点击触发。
+
+## 默认方案
+
+- 转场：第 2 页起统一一种，克制为先；`morph` 需要 PowerPoint 2019+，旧版本不支持，且只在上下页有同名/同位形状时才有意义。
+- 入场：只加在 `catalog` 与 `content` 页；`cover`、`section`、`close` 不加。
+- 分组：内容区（标题线之下、页脚之上）的顶层形状按垂直位置聚成"行"，行数向 deck.json 里该页 block 数靠拢。每行一次点击：第一个形状 `clickEffect`，其余形状 `withEffect`，所以一页有几个 block 就点几次。组合形状整体做动画，不对组合内子形状单独加。
+- 跳过名字以 `DECO_` 开头的装饰形状；标题、页脚等内容区之外的形状始终可见。
+
+## 实现与自检
+
+- 入场动画按 PowerPoint 自己写出的结构生成：`mainSeq` 主序列 → 每次点击一个外层 `par` → 内层 `par` 里放该行所有效果，并写 `bldLst`。不使用 `power_pptx` 的 `slide.animations`：它不写 `mainSeq`，PowerPoint 读回主序列为空，播放时部分形状不出现。
+- 保存后自动自检：目标 id 都存在于该页且无重复、没有形状被重复加入场、主序列唯一、每次点击由 1 个 `clickEffect` 加若干 `withEffect` 组成、效果数与点击数和计划一致，失败返回非 0。
+- `--com-check`（仅 Windows、需 `pip install pywin32` 与已装 PowerPoint）：用 PowerPoint 打开成品，读回每页主序列的效果数、点击数和形状名，和计划逐页核对。自检通过不等于已放映验证，节奏仍建议在 PowerPoint 里放映一遍。
+
+## 顺序与限制
+
+- 动画由形状 id 引用，必须在 `formula.py`（它会删除占位框、新增公式形状）和几何装饰**之后**运行；此后再用 officecli 或其他工具增删形状，会让动画目标失效，需要重跑本脚本。
+- 只做点击触发的入场；不支持自动播放、退出和强调效果。
+- 模板模式的页面形状布局不由本仓库控制，内容区按页高比例判断，必要时调整 `CONTENT_TOP_FRAC` / `CONTENT_BOTTOM_FRAC`。
+- 同一页里若形状外框纵向重叠，会被并入同一行（同一次点击）。
+- 动效不改变静态版面，结果校验仍以静态出图为准。

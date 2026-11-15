@@ -12,7 +12,8 @@
 }
 ```
 
-`source` 写入正文页脚注。无模板时画布 16:9；有模板时由模板决定。
+`source` 写入正文页脚注。无模板时画布 16:9；有模板时由模板决定。deck.json 里没有颜色、主题或样式字段：
+配色与基本版式在阶段三写进渲染器副本的顶部常量，不进 JSON。
 
 **通用要求**：`items[]` 里的条目 `body` 都必须是能读出信息的句子（≥10 字）。不要为了填满页面硬凑条目。
 
@@ -315,9 +316,30 @@
 }
 ```
 
+### formula
+
+数学公式。`latex` 必填，直接写 LaTeX（`\frac{a}{b}`、`\sum_{i=1}^{n}`、`\sqrt{x}`、希腊字母等）；
+`display` 为 `true` 时独占一行居中，`false` 为行内较小的一行；`caption` 可选，写公式说明。
+
+渲染器先画一个名为 `FORMULA_<序号>` 的占位文本框（文字是 LaTeX 源码），并写出 `<输出名>.formulas.json`；
+渲染后跑 `scripts/formula.py <输出.pptx>`，用 officecli 在原位置写入 PowerPoint 原生可编辑公式（OMML）并删除占位框。
+写入失败整批回滚，不会降级成图片。公式页同样要满足正文字数与密度要求，公式前后写清变量含义与结论。
+
+```json
+{ "kind": "formula", "latex": "E = mc^2", "display": true, "caption": "质能方程" }
+```
+
+#### 行内公式 `$...$`
+
+任意文本字段（段落、卡片、表格单元格、列表项等）里，数学符号用 `$LaTeX$` 标记，例如 `第 $l$ 层的神经元数 $n_l$`、`衰减系数 $\alpha_{t}$`。字面美元符号写成 `\$`。
+渲染器照原样写入文字，`scripts/formula.py` 在渲染后统一把 `$...$` 换成 PowerPoint 原生可编辑的行内公式
+（字号与颜色沿用所在文字，同一段里被拆成多个 run 的 `$...$` 也会合并处理）。`$` 必须成对，否则 `deck_check.py` 报错。
+只含公式的一整段文字，PowerPoint 会按独占一行的样式排版（居中、上下标更大）；要行内效果就把公式放进一句话里。
+`latex` 字段（`formula` block）不用 `$` 包裹。
+
 ### figure
 
-引用资料中的原图，等比缩放放入，不拉伸。`src` 相对 deck.json 所在目录；`side` 可选，是图旁的文字栏
+引用资料中的原图，等比缩放放入，不拉伸。仅当用户在询问阶段允许复用资料图片时使用。`src` 相对 deck.json 所在目录；`side` 可选，是图旁的文字栏
 （`kicker` / `title` / `items` 字符串列表）；`image_side` 为 `left` 或 `right`（默认 right）；
 `image_ratio` 图占宽度比例（有 `side` 时默认 0.62）；`height` 图的最大高度（英寸），同页还有别的
 block 时必须设置。图宽过小的截图（如 400px）不要放太大，否则会糊。
@@ -344,10 +366,15 @@ block 时必须设置。图宽过小的截图（如 400px）不要放太大，�
 - 没有只放 `lead` / `insight` / `chips` 的页
 - 等宽 `cards` 全稿 ≤ 2 页；禁止连续两页 `cards`/`columns`
 - 不要给 block 加颜色字段（color / fontSize / hex 一律禁止）
+- `formula` 的 `latex` 必填且非空
+- 文本里的行内公式 `$...$` 的 `$` 必须成对，字面美元符号写成 `\$`
+- 模板模式（`deck_check.py --template-mode`）：版式由模板决定，上面关于字数、版式种类、结构页、`cards` 与相邻页版式的检查全部跳过；
+  仍检查目录与章节一致、标题 ≥8 字、禁止视觉字段、block kind 合法、`formula` 的 `latex`、`$` 配对
+- 启用了特殊排版拓展时，`bignum` / `asym` 等新增 kind 要用 `deck_check.py --extra-kinds` 放行（字段见 `extensions/special-layout/EXT.md`）
 
 ## 5. deck_check.py 错误解读
 
-`deck_check.py deck.json` 失败会非 0 退出并打印每条原因，格式 `✗ <原因>`。按表修复后重跑：
+`deck_check.py deck.json`（阶段三复制到项目里的渲染器副本里那份）失败会非 0 退出并打印每条原因，格式 `✗ <原因>`。按表修复后重跑：
 
 
 | 报错                                       | 修法                                 |
@@ -361,4 +388,7 @@ block 时必须设置。图宽过小的截图（如 400px）不要放太大，�
 | 第 N 页与上一页连续使用 cards/columns      | 换相邻页版式                         |
 | cards 页共 N 页 > 2                        | 减少卡片页                           |
 | 全稿版式种类过少                           | 增加结构版式种类                     |
-| block 携带视觉字段 color/fontSize/hex      | 删除该字段（颜色由渲染器控制）       |
+| block 携带视觉字段 color/fontSize/hex      | 删除该字段（颜色由渲染器副本的常量控制） |
+| 未知的 block kind                          | 改成已有 kind，或用 `--extra-kinds` 放行渲染器副本里新增的 kind |
+| formula 缺少 latex                         | 补上 LaTeX 源码                      |
+| 第 N 页 … 的 $ 数量为奇数 / 含空的行内公式 $$ | 补全 `$...$`；字面美元符号写成 `\$`  |
