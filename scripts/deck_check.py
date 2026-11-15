@@ -27,14 +27,101 @@ import sys
 from pathlib import Path
 
 BUILTIN_KINDS = {
-    "agenda", "figure", "lead", "insight", "stats", "columns", "steps", "chips",
+    "agenda", "chart", "figure", "lead", "insight", "stats", "columns", "steps", "chips",
     "layers", "table", "split", "callouts", "cards", "rows", "compare",
     "pipeline", "hub", "timeline", "points", "formula",
 }
 NON_STRUCTURE_KINDS = {"lead", "insight", "chips"}
 MIN_KINDS = 5
+PAGE_TYPES = {"cover", "catalog", "section", "content", "close"}
+PAGE_REQUIRED = {
+    "cover": ("title",),
+    "catalog": ("title", "blocks"),
+    "section": ("title",),
+    "content": ("title", "blocks"),
+    "close": ("title",),
+}
 NON_TEXT_KEYS = {"latex", "kind", "type", "src", "image", "path", "file", "layout"}
 BARE_DOLLAR_RE = re.compile(r"(?<!\\)\$")
+CHART_TYPES = {
+    "column_clustered", "column_stacked", "column_stacked_100", "bar_clustered",
+    "bar_stacked", "line", "line_markers", "area", "area_stacked", "pie",
+    "doughnut", "radar", "radar_filled", "xy_scatter", "xy_scatter_lines", "bubble",
+}
+XY_CHART_TYPES = {"xy_scatter", "xy_scatter_lines", "bubble"}
+
+
+def _finite_number(value):
+    try:
+        return math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return False
+
+
+def _check_chart(block, slide_no):
+    errs = []
+    chart_type = str(block.get("chart_type", "")).strip().lower()
+    fallback = str(block.get("fallback", "auto")).strip().lower()
+    series = block.get("series")
+    if not chart_type:
+        errs.append(f"第 {slide_no} 页 chart 缺少 chart_type")
+    elif chart_type not in CHART_TYPES and fallback != "svg":
+        errs.append(f"第 {slide_no} 页 chart 类型「{chart_type}」不在原生白名单，需明确 fallback=svg")
+    if fallback not in {"auto", "native", "svg"}:
+        errs.append(f"第 {slide_no} 页 chart fallback 必须是 auto/native/svg")
+    if not isinstance(series, list) or not series:
+        return errs + [f"第 {slide_no} 页 chart 至少需要一个 series"]
+    names = []
+    if chart_type in XY_CHART_TYPES:
+        for si, item in enumerate(series, start=1):
+            if not isinstance(item, dict) or not str(item.get("name", "")).strip():
+                errs.append(f"第 {slide_no} 页 chart 第 {si} 个 series 缺少 name")
+            else:
+                names.append(item["name"])
+            points = item.get("points") if isinstance(item, dict) else None
+            if not isinstance(points, list) or not points:
+                errs.append(f"第 {slide_no} 页 chart 第 {si} 个 series 缺少 points")
+                continue
+            for pi, point in enumerate(points, start=1):
+                needed = ("x", "y", "size") if chart_type == "bubble" else ("x", "y")
+                if not isinstance(point, dict) or any(k not in point for k in needed):
+                    errs.append(f"第 {slide_no} 页 chart 第 {si} 个点 {pi} 字段不完整")
+                    continue
+                if any(not _finite_number(point[k]) for k in needed):
+                    errs.append(f"第 {slide_no} 页 chart 第 {si} 个点 {pi} 含非有限数值")
+                if chart_type == "bubble" and float(point["size"]) <= 0:
+                    errs.append(f"第 {slide_no} 页 bubble 第 {si} 个点 {pi} 的 size 必须为正")
+    else:
+        categories = block.get("categories")
+        if not isinstance(categories, list) or not categories:
+            errs.append(f"第 {slide_no} 页 chart 缺少 categories")
+            categories = []
+        for si, item in enumerate(series, start=1):
+            if not isinstance(item, dict) or not str(item.get("name", "")).strip():
+                errs.append(f"第 {slide_no} 页 chart 第 {si} 个 series 缺少 name")
+                continue
+            names.append(item["name"])
+            values = item.get("values")
+            if not isinstance(values, list) or len(values) != len(categories):
+                errs.append(f"第 {slide_no} 页 chart 第 {si} 个 series 长度必须等于 categories")
+            elif any(not _finite_number(v) for v in values):
+                errs.append(f"第 {slide_no} 页 chart 第 {si} 个 series 含非有限数值")
+            elif chart_type in {"pie", "doughnut"}:
+                numeric = [float(v) for v in values]
+                if any(v < 0 for v in numeric):
+                    errs.append(f"第 {slide_no} 页 {chart_type} 的数值不能为负")
+                elif not any(v > 0 for v in numeric):
+                    errs.append(f"第 {slide_no} 页 {chart_type} 至少需要一个正数扇区")
+    if len(names) != len(set(names)):
+        errs.append(f"第 {slide_no} 页 chart 的 series name 必须唯一")
+    has_context = (str(block.get("source", "")).strip()
+                   or bool(block.get("table_view"))
+                   or bool(str(block.get("accessibility_note", "")).strip()))
+    if not has_context:
+        errs.append(f"第 {slide_no} 页 chart 需要 source、table_view 或 accessibility_note")
+    if block.get("secondary_axis"):
+        errs.append(f"第 {slide_no} 页 chart 禁止使用 secondary_axis")
+    return errs
 
 
 def _collect_side(d: dict) -> list:
@@ -55,15 +142,21 @@ def collect_text(s: dict) -> list:
     for b in s.get("blocks", []):
         if not isinstance(b, dict):
             continue
-        for k in ("text", "title", "body", "note", "kicker", "phase", "metric", "tag"):
+        for k in ("text", "title", "subtitle", "body", "note", "source", "kicker", "phase", "metric", "tag", "unit", "table_view", "accessibility_note"):
             v = b.get(k)
             if isinstance(v, str):
                 out.append(v)
         if isinstance(b.get("caption"), str):
             out.append(b["caption"])
-        for side in ("left", "right", "side"):
+        for side in ("left", "right", "side", "center", "main"):
             if isinstance(b.get(side), dict):
                 out.extend(_collect_side(b[side]))
+        for key in ("notes", "rings"):
+            for it in b.get(key, []):
+                if isinstance(it, dict):
+                    for kk in ("label", "title", "body", "text", "key"):
+                        if isinstance(it.get(kk), str):
+                            out.append(it[kk])
         for it in b.get("items", []):
             if isinstance(it, str):
                 out.append(it)
@@ -118,7 +211,24 @@ def validate_deck(deck: dict, extra_kinds=(), template_mode=False) -> list:
     if not isinstance(slides, list) or not slides:
         return ["slides 为空或缺失"]
     errs += _check_inline_math(slides)
-    types = [s.get("type") for s in slides]
+    types = []
+    for idx, slide in enumerate(slides, start=1):
+        if not isinstance(slide, dict):
+            errs.append(f"第 {idx} 页必须是对象")
+            continue
+        page_type = str(slide.get("type", "")).strip().lower()
+        types.append(page_type)
+        if page_type not in PAGE_TYPES:
+            errs.append(f"第 {idx} 页 type「{page_type or '<空>'}」不是支持的页面类型")
+            continue
+        for field in PAGE_REQUIRED[page_type]:
+            value = slide.get(field)
+            if field == "blocks":
+                valid = isinstance(value, list)
+            else:
+                valid = isinstance(value, str) and bool(value.strip())
+            if not valid:
+                errs.append(f"第 {idx} 页 {page_type} 缺少必填字段 {field}")
     has_section = "section" in types
     has_catalog = "catalog" in types
     if has_section and not has_catalog:
@@ -127,12 +237,19 @@ def validate_deck(deck: dict, extra_kinds=(), template_mode=False) -> list:
         errs.append("存在 catalog 目录页但没有对应 section 章节页（目录声明了几章，就必须有几章）")
     catalog_items = []
     for s in slides:
-        if s.get("type") == "catalog":
-            for b in s.get("blocks", []):
-                if b.get("kind") == "agenda":
-                    catalog_items = [i.get("title", "").strip() for i in b.get("items", [])]
+        if not isinstance(s, dict) or s.get("type") != "catalog":
+            continue
+        blocks = s.get("blocks", [])
+        if not isinstance(blocks, list):
+            continue
+        for b in blocks:
+            if isinstance(b, dict) and b.get("kind") == "agenda":
+                catalog_items = [i.get("title", "").strip()
+                                 for i in b.get("items", [])
+                                 if isinstance(i, dict)]
     if has_section:
-        sec_items = [s.get("title", "").strip() for s in slides if s.get("type") == "section"]
+        sec_items = [s.get("title", "").strip() for s in slides
+                     if isinstance(s, dict) and s.get("type") == "section"]
         if len(sec_items) != len(catalog_items):
             errs.append(f"目录 {len(catalog_items)} 条与 section {len(sec_items)} 个数量不一致")
         else:
@@ -143,8 +260,15 @@ def validate_deck(deck: dict, extra_kinds=(), template_mode=False) -> list:
     prev_cardish = False
     seen_kinds = set()
     for idx, s in enumerate(slides):
+        if not isinstance(s, dict):
+            continue
         blocks = s.get("blocks", [])
+        if not isinstance(blocks, list):
+            continue
         for b in blocks:
+            if not isinstance(b, dict):
+                errs.append(f"第 {idx + 1} 页 block 必须是对象")
+                continue
             if any(k in b for k in ("color", "fontSize", "hex")):
                 errs.append(f"第 {idx + 1} 页 block 携带了视觉字段 color/fontSize/hex，禁止")
             kind = b.get("kind") if isinstance(b, dict) else None
@@ -152,6 +276,8 @@ def validate_deck(deck: dict, extra_kinds=(), template_mode=False) -> list:
                 errs.append(f"第 {idx + 1} 页出现未知 block kind「{kind}」")
             elif kind == "formula" and not str(b.get("latex", "")).strip():
                 errs.append(f"第 {idx + 1} 页 formula block 缺少 latex")
+            elif kind == "chart":
+                errs.extend(_check_chart(b, idx + 1))
         if s.get("type") == "content" and not template_mode:
             total = sum(len(str(x)) for x in collect_text(s))
             if total < 110:

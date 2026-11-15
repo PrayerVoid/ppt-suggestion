@@ -33,6 +33,8 @@ from deck_check import validate_deck  # noqa: E402
 try:
     from power_pptx import Presentation
     from power_pptx.dml.color import RGBColor
+    from power_pptx.chart.data import BubbleChartData, CategoryChartData, XyChartData
+    from power_pptx.enum.chart import XL_CHART_TYPE
     from power_pptx.enum.shapes import MSO_CONNECTOR, MSO_SHAPE
     from power_pptx.enum.text import MSO_ANCHOR, PP_ALIGN
     from power_pptx.oxml.ns import qn
@@ -780,7 +782,177 @@ def _figure(slide, x, y, w, b, style):
     return dh + cap_h
 
 
+CHART_TYPES = {
+    "column_clustered": XL_CHART_TYPE.COLUMN_CLUSTERED,
+    "column_stacked": XL_CHART_TYPE.COLUMN_STACKED,
+    "column_stacked_100": XL_CHART_TYPE.COLUMN_STACKED_100,
+    "bar_clustered": XL_CHART_TYPE.BAR_CLUSTERED,
+    "bar_stacked": XL_CHART_TYPE.BAR_STACKED,
+    "line": XL_CHART_TYPE.LINE,
+    "line_markers": XL_CHART_TYPE.LINE_MARKERS,
+    "area": XL_CHART_TYPE.AREA,
+    "area_stacked": XL_CHART_TYPE.AREA_STACKED,
+    "pie": XL_CHART_TYPE.PIE,
+    "doughnut": XL_CHART_TYPE.DOUGHNUT,
+    "radar": XL_CHART_TYPE.RADAR,
+    "radar_filled": XL_CHART_TYPE.RADAR_FILLED,
+    "xy_scatter": XL_CHART_TYPE.XY_SCATTER,
+    "xy_scatter_lines": XL_CHART_TYPE.XY_SCATTER_LINES,
+    "bubble": XL_CHART_TYPE.BUBBLE,
+}
+CHART_PALETTE = (ACCENT, ACCENT_DK, RGBColor(0x8A, 0x9A, 0xB7), RGBColor(0xB8, 0xC1, 0xD1))
+
+
+def _chart_title(slide, x, y, w, b):
+    title = str(b.get("title", "")).strip()
+    subtitle = str(b.get("subtitle", "")).strip()
+    ty = y
+    if title:
+        th = text_height(title, 18, w, 1.1)
+        add_text(slide, x, ty, w, th + 0.05, title, size=18, bold=True, line_spacing=1.1)
+        ty += th + 0.12
+    if subtitle:
+        sh = text_height(subtitle, 11, w, 1.15)
+        add_text(slide, x, ty, w, sh + 0.04, subtitle, size=11, color=SUBTLE, line_spacing=1.15)
+        ty += sh + 0.08
+    return ty
+
+
+def _chart_data(b, chart_type):
+    series = b.get("series", [])
+    if chart_type in {"xy_scatter", "xy_scatter_lines"}:
+        data = XyChartData()
+        for item in series:
+            s = data.add_series(str(item.get("name", "")))
+            for point in item.get("points", []):
+                s.add_data_point(float(point["x"]), float(point["y"]))
+        return data
+    if chart_type == "bubble":
+        data = BubbleChartData()
+        for item in series:
+            s = data.add_series(str(item.get("name", "")))
+            for point in item.get("points", []):
+                s.add_data_point(float(point["x"]), float(point["y"]), float(point["size"]))
+        return data
+    data = CategoryChartData()
+    data.categories = [str(v) for v in b.get("categories", [])]
+    for item in series:
+        data.add_series(str(item.get("name", "")), [float(v) for v in item.get("values", [])])
+    return data
+
+
+def _chart_svg(slide, x, y, w, h, b, chart_type):
+    try:
+        import io
+        import os
+        import matplotlib.pyplot as plt
+        from matplotlib import font_manager
+        from power_pptx.design.figures import add_matplotlib_figure
+    except ImportError as exc:
+        raise RuntimeError("图表需要 matplotlib，复杂图表的 SVG 兜底不可用") from exc
+    for filename in ("msyh.ttc", "simhei.ttf"):
+        path = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / filename
+        if path.exists():
+            font_manager.fontManager.addfont(str(path))
+    plt.rcParams.update({
+        "font.family": ["Microsoft YaHei", "SimHei", "DejaVu Sans"],
+        "font.sans-serif": ["Microsoft YaHei", "SimHei", "DejaVu Sans"],
+        "axes.unicode_minus": False,
+    })
+    fig, ax = plt.subplots(figsize=(max(4, w * 1.35), max(2.2, h * 1.35)), dpi=160)
+    try:
+        series = b.get("series", [])
+        if chart_type in {"xy_scatter", "xy_scatter_lines", "bubble"}:
+            for i, item in enumerate(series):
+                points = item.get("points", [])
+                xs = [float(p["x"]) for p in points]
+                ys = [float(p["y"]) for p in points]
+                if chart_type == "bubble":
+                    sizes = [max(10, float(p["size"]) * 8) for p in points]
+                    ax.scatter(xs, ys, s=sizes, label=item.get("name", ""), color="#4F6082", alpha=0.7)
+                else:
+                    ax.plot(xs, ys, marker="o", label=item.get("name", ""), color="#4F6082" if i == 0 else "#8A9AB7")
+        else:
+            cats = [str(v) for v in b.get("categories", [])]
+            vals = [[float(v) for v in item.get("values", [])] for item in series]
+            if chart_type in {"pie", "doughnut"} and vals:
+                ax.pie(vals[0], labels=cats, colors=["#4F6082", "#8A9AB7", "#B8C1D1", "#D9DDE3"][:len(cats)],
+                       wedgeprops={"width": 0.45} if chart_type == "doughnut" else None)
+            elif chart_type.startswith("bar") and vals:
+                pos = list(range(len(cats)))
+                for i, values in enumerate(vals):
+                    ax.barh([p + (i - (len(vals) - 1) / 2) * 0.22 for p in pos], values,
+                            height=0.18, label=series[i].get("name", ""), color="#4F6082" if i == 0 else "#8A9AB7")
+                ax.set_yticks(pos, cats)
+            else:
+                pos = list(range(len(cats)))
+                for i, values in enumerate(vals):
+                    if chart_type.startswith("line"):
+                        ax.plot(pos, values, marker="o", label=series[i].get("name", ""),
+                                color="#4F6082" if i == 0 else "#8A9AB7")
+                    else:
+                        ax.bar([p + (i - (len(vals) - 1) / 2) * 0.24 for p in pos], values,
+                               width=0.22, label=series[i].get("name", ""),
+                               color="#4F6082" if i == 0 else "#8A9AB7")
+                ax.set_xticks(pos, cats)
+        if len(series) > 1:
+            ax.legend(frameon=False, fontsize=8)
+        ax.grid(axis="y", color="#D9DDE3", linewidth=0.6)
+        ax.set_axisbelow(True)
+        fig.tight_layout()
+        try:
+            add_matplotlib_figure(slide, fig, Inches(x), Inches(y), Inches(w), Inches(h), format="svg")
+        except Exception:
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=180, transparent=True)
+            buf.seek(0)
+            slide.shapes.add_picture(buf, Inches(x), Inches(y), Inches(w), Inches(h))
+    finally:
+        plt.close(fig)
+
+
+def _chart(slide, x, y, w, b, style):
+    chart_type = str(b.get("chart_type", "column_clustered")).strip().lower()
+    fallback = str(b.get("fallback", "auto")).lower()
+    context = (str(b.get("source", "")).strip()
+               or str(b.get("accessibility_note", "")).strip()
+               or (str(b.get("table_view", "")).strip() if b.get("table_view") else ""))
+    top = _chart_title(slide, x, y, w, b)
+    bottom = CONTENT_BOTTOM - 0.22 if context else CONTENT_BOTTOM
+    h = max(1.8, bottom - top)
+    if not b.get("series"):
+        raise RuntimeError("chart block 至少需要一个 series")
+    if fallback == "svg" or chart_type not in CHART_TYPES:
+        _chart_svg(slide, x, top, w, h, b, chart_type)
+    else:
+        try:
+            data = _chart_data(b, chart_type)
+            frame = slide.shapes.add_chart(CHART_TYPES[chart_type], Inches(x), Inches(top), Inches(w), Inches(h), data)
+            chart = frame.chart
+            chart.has_legend = len(b.get("series", [])) > 1
+            chart.recolour(CHART_PALETTE)
+            if chart_type.startswith("bar"):
+                try:
+                    chart.category_axis.reverse_order = False
+                except Exception:
+                    pass
+            try:
+                chart.has_title = False
+                chart.value_axis.has_major_gridlines = True
+            except Exception:
+                pass
+        except Exception:
+            if fallback == "native":
+                raise
+            _chart_svg(slide, x, top, w, h, b, chart_type)
+    source = str(b.get("source", "")).strip()
+    if source:
+        add_text(slide, x, CONTENT_BOTTOM - 0.22, w, 0.2, source, size=9, color=FAINT)
+    return (CONTENT_BOTTOM - y) if source else h + (top - y)
+
+
 BLOCK_RENDERERS = {
+    "chart": _chart,
     "figure": _figure,
     "lead": _lead,
     "insight": _insight,

@@ -65,6 +65,14 @@ def is_picture(sh) -> bool:
         return False
 
 
+def is_chart(sh) -> bool:
+    """GraphicFrame 中的原生 Office 图表。"""
+    try:
+        return bool(getattr(sh, "has_chart", False)) and getattr(sh, "chart", None) is not None
+    except Exception:
+        return False
+
+
 def bbox(sh):
     return (_inches(getattr(sh, "left", None)), _inches(getattr(sh, "top", None)),
             _inches(getattr(sh, "width", None)), _inches(getattr(sh, "height", None)))
@@ -118,7 +126,7 @@ def occupied_bbox(sh, clamp_h=True):
     collides with whatever sits below.
     """
     x, y, w, h = bbox(sh)
-    if has_visible_fill(sh):
+    if is_chart(sh) or has_visible_fill(sh):
         return x, y, w, h
     if not has_text(sh):
         return 0.0, 0.0, 0.0, 0.0
@@ -248,7 +256,67 @@ def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h,
                f"第 {sidx} 页: 元素越界「{txt}」({_n(x + w)}, {_n(y + h)}) 超出页面 "
                f"({_n(page_w)} × {_n(page_h)})")
 
-    # 2b) inline formulas that formula.py has not converted yet
+    # 2b) native chart GraphicFrame
+    for sh in shapes:
+        if not is_chart(sh):
+            continue
+        x, y, w, h = bbox(sh)
+        if w <= 0 or h <= 0:
+            issues.append(f"第 {sidx} 页: 图表零尺寸 ({_n(x)}, {_n(y)})")
+            continue
+        chart = sh.chart
+        series = list(getattr(chart, "series", ()) or ())
+        if not series:
+            issues.append(f"第 {sidx} 页: 原生图表没有数据系列")
+        else:
+            for idx, item in enumerate(series, start=1):
+                if not str(getattr(item, "name", "") or "").strip():
+                    issues.append(f"第 {sidx} 页: 原生图表第 {idx} 个系列缺少名称")
+                values = tuple(getattr(item, "values", ()) or ())
+                if not values:
+                    issues.append(f"第 {sidx} 页: 原生图表第 {idx} 个系列没有数值")
+                else:
+                    try:
+                        finite = all(math.isfinite(float(value)) for value in values)
+                    except (TypeError, ValueError):
+                        finite = False
+                    if not finite:
+                        issues.append(f"第 {sidx} 页: 原生图表第 {idx} 个系列含非有限数值")
+            if len(series) > 1 and not bool(getattr(chart, "has_legend", False)):
+                issues.append(f"第 {sidx} 页: 多系列原生图表缺少图例")
+        chart_type = str(getattr(chart, "chart_type", "") or "").strip()
+        if not chart_type:
+            issues.append(f"第 {sidx} 页: 原生图表缺少图表类型")
+        if bool(getattr(chart, "has_title", False)):
+            try:
+                title = chart.chart_title
+                if not title.has_text_frame or not title.text_frame.text.strip():
+                    issues.append(f"第 {sidx} 页: 原生图表标题为空")
+            except Exception:
+                issues.append(f"第 {sidx} 页: 原生图表标题无法读取")
+
+    # deck 有对应 chart block 时，再核对原生图表的类型和系列数。
+    if deck_slide is not None:
+        blocks = [b for b in deck_slide.get("blocks", [])
+                  if isinstance(b, dict) and b.get("kind") == "chart"]
+        native_blocks = [b for b in blocks if str(b.get("fallback", "auto")).lower() != "svg"]
+        native_shapes = [sh for sh in shapes if is_chart(sh)]
+        if any(str(b.get("fallback", "auto")).lower() == "native" for b in native_blocks):
+            if len(native_shapes) < len([b for b in native_blocks
+                                         if str(b.get("fallback", "auto")).lower() == "native"]):
+                issues.append(f"第 {sidx} 页: deck 要求原生图表，但 PPTX 中缺少 GraphicFrame")
+        if len(native_blocks) == 1 and len(native_shapes) == 1:
+            block = native_blocks[0]
+            actual = str(getattr(native_shapes[0].chart, "chart_type", "")).split(" (", 1)[0].strip().lower()
+            expected = str(block.get("chart_type", "")).strip().lower()
+            if actual and expected and actual != expected:
+                issues.append(f"第 {sidx} 页: 图表类型为「{actual}」，与 deck 的「{expected}」不一致")
+            expected_count = len(block.get("series", []))
+            actual_count = len(list(native_shapes[0].chart.series))
+            if expected_count != actual_count:
+                issues.append(f"第 {sidx} 页: 图表系列数为 {actual_count}，与 deck 的 {expected_count} 不一致")
+
+    # 2c) inline formulas that formula.py has not converted yet
     for frag in find_unconverted_inline(slide):
         issues.append(f"第 {sidx} 页: 公式未转换，请先跑 formula.py（残留「{frag}」）")
 
@@ -280,6 +348,11 @@ def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h,
             x, y, w, h = bbox(sh)
             if w <= 0.01 or h <= 0.01:
                 issues.append(f"第 {sidx} 页: 零尺寸形状 ({_n(x)}, {_n(y)})")
+    for sh in shapes:
+        if is_chart(sh):
+            x, y, w, h = bbox(sh)
+            if w <= 0.01 or h <= 0.01:
+                issues.append(f"第 {sidx} 页: 图表 GraphicFrame 零尺寸「{sh.name}」")
 
     # 5) pictures
     for sh in shapes:
@@ -366,7 +439,9 @@ def main() -> int:
 
     # layout repetition between consecutive content slides (no-template rendering)
     for i in range(1, len(signatures)):
-        if signatures[i][1] == signatures[i - 1][1] and signatures[i][1]:
+        same = signatures[i][1] == signatures[i - 1][1] and signatures[i][1]
+        chart_only = same == ["chart"]
+        if same and not chart_only:
             issues.append(f"第 {signatures[i][0]} 页与上一页 block 版式完全相同")
 
     # report (Hard / Soft grading per references/validation.md)

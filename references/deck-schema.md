@@ -356,6 +356,30 @@ block 时必须设置。图宽过小的截图（如 400px）不要放太大，�
 }
 ```
 
+### chart
+
+图表能力默认开启。没有资料中的真实数据、来源或可核对口径时，不生成图表，不凭空补数值、分类、趋势或结论。优先使用 `power_pptx` 生成 PowerPoint 原生图表；类型不支持或 Office 兼容性不稳定时，明确写 `fallback: "svg"`，SVG 兜底依赖 `matplotlib` 与 `cairosvg`。
+
+`fallback` 可写 `auto`（默认，原生失败时转 SVG）、`native`（强制原生）或 `svg`（强制 SVG）。分类图表使用 `categories` 与 `series[].values`，每个系列的数值数量必须与分类数量一致；`xy_scatter`、`xy_scatter_lines`、`bubble` 使用 `series[].points`，点分别需要 `x`、`y`，气泡图还需要正数 `size`。系列名称必须唯一。
+
+```json
+{
+  "kind": "chart",
+  "title": "来自资料的图表标题",
+  "chart_type": "column_clustered",
+  "categories": ["分类一", "分类二"],
+  "series": [{ "name": "系列名称", "values": ["<来自资料的数值一>", "<来自资料的数值二>"] }],
+  "unit": "可选单位",
+  "source": "资料来源或数据表",
+  "accessibility_note": "可选的口径与读图说明",
+  "fallback": "auto"
+}
+```
+
+上例只展示字段结构，数值必须替换为资料中的真实数据。每个图表必须提供 `source`、`table_view` 或 `accessibility_note` 至少一项，说明来源、口径、时间范围或读图方式；多系列图表尤其不能省略。禁止使用 `secondary_axis`；需要双轴时改用同一坐标口径、拆分图表或文字说明。原生白名单之外的类型必须使用 `fallback: "svg"`。支持的原生类型见 `extensions/charts/EXT.md`。
+
+模板模式只保留模板中已有的图表，不新建图表，也不改写已有图表的系列；`chart` block 不能绕过这一限制。
+
 ## 4. 质量检查清单（写 JSON 前过一遍，`deck_check.py` 会强制执行）
 
 - 每页 `content.title` 是结论，不是模块名（≥8 字）
@@ -367,10 +391,11 @@ block 时必须设置。图宽过小的截图（如 400px）不要放太大，�
 - 等宽 `cards` 全稿 ≤ 2 页；禁止连续两页 `cards`/`columns`
 - 不要给 block 加颜色字段（color / fontSize / hex 一律禁止）
 - `formula` 的 `latex` 必填且非空
+- `chart` 只能使用真实数据；必须有 `source`、`table_view` 或 `accessibility_note` 至少一项，禁止 `secondary_axis`
 - 文本里的行内公式 `$...$` 的 `$` 必须成对，字面美元符号写成 `\$`
 - 模板模式（`deck_check.py --template-mode`）：版式由模板决定，上面关于字数、版式种类、结构页、`cards` 与相邻页版式的检查全部跳过；
   仍检查目录与章节一致、标题 ≥8 字、禁止视觉字段、block kind 合法、`formula` 的 `latex`、`$` 配对
-- 启用了特殊排版拓展时，`bignum` / `asym` 等新增 kind 要用 `deck_check.py --extra-kinds` 放行（字段见 `extensions/special-layout/EXT.md`）
+- 启用了特殊排版拓展时，`bignum` / `asym` / `quote` / `diagonal` / `radial` / `ring` / `marginalia` / `concentric` / `quadrant` 等新增 kind 要用 `deck_check.py --extra-kinds` 放行（字段见 `extensions/special-layout/EXT.md`）
 
 ## 5. deck_check.py 错误解读
 
@@ -391,4 +416,6 @@ block 时必须设置。图宽过小的截图（如 400px）不要放太大，�
 | block 携带视觉字段 color/fontSize/hex      | 删除该字段（颜色由渲染器副本的常量控制） |
 | 未知的 block kind                          | 改成已有 kind，或用 `--extra-kinds` 放行渲染器副本里新增的 kind |
 | formula 缺少 latex                         | 补上 LaTeX 源码                      |
+| 第 N 页 chart 缺少来源说明 | 补 `source`、`table_view` 或 `accessibility_note`，说明数据来源、口径或读图方式 |
+| 第 N 页 chart 使用 `secondary_axis` | 删除该字段，改用同一坐标口径、拆分图表或文字说明 |
 | 第 N 页 … 的 $ 数量为奇数 / 含空的行内公式 $$ | 补全 `$...$`；字面美元符号写成 `\$`  |

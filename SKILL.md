@@ -38,8 +38,7 @@ officecli 二进制下载失败时的处理见 `README.md` 的"安装"一节。�
 | ⑤ 排版渲染 | 有模板读 `references/template-inherit.md`；启用拓展读 `extensions/<名>/EXT.md` | 渲染器副本 / `template_fill.py`、`formula.py`、拓展脚本；产物 `<中文名>.pptx` |
 | ⑥ 结果校验 | `references/validation.md` | `validate_pptx.py`、`render_preview.py` 出图自查；产物 `校验报告.md` |
 
-每个 references 文档本身就是完整的设计规范，按要求执行即可。可选拓展（动效、几何装饰、特殊排版）
-默认关闭，说明在 `extensions/README.md`；用户没选就不用读。
+每个 references 文档本身就是完整的设计规范，按要求执行即可。统计图表能力默认可用，但只有资料中存在真实数据关系时才生成图表；无真实数据时不凭空添加。动效、几何装饰、特殊排版等可选拓展默认关闭，说明在 `extensions/README.md`；用户没选就不用读。
 
 ## 六阶段工作流（严格串行）
 
@@ -62,23 +61,23 @@ officecli 二进制下载失败时的处理见 `README.md` 的"安装"一节。�
 
 1. **场合、受众、页数**：最多 3 个问题；用户已说明的不再问。
 2. **是否完全遵循模板**（给了模板才问）：是 → 模板模式，用 officecli 直接编辑模板副本；否 → 白底极简，走渲染器。
-3. **是否快速模式**：是 → 跳过本阶段之后的所有提问与确认，随机采样直接出稿。
+3. **是否快速模式**：先提示：完整模式会消耗更多 token 和时间，但可控性更强；快速模式会减少规划、候选和确认，适合先出初稿，交付后可能需要调整。选择是 → 按 `references/fast-mode.md` 走 fast-lite 路径，并跳过本阶段之后的提问与确认；选择否 → 走完整或普通 Quick 流程。
 4. **是否允许复用参考资料里的图片**：否 → `figure` 不使用资料原图。
-5. **是否启用可选拓展**（多选，默认全不启用）：动效、几何装饰、特殊排版。
+5. **是否启用可选拓展**：统计图表默认开启（仅有真实数据关系时生成）；动效、几何装饰、特殊排版默认关闭。说明：拓展会增加额外 token、时间和出错概率；几何装饰中的“底纹”还需单独明确允许。
 
-用户说"直接做""快速"即视为快速模式。快速模式的默认值：有模板则遵循模板；允许复用图片；拓展全部关闭。
+用户说"直接做""快速"即视为快速模式。快速模式的默认值：有模板则遵循模板；允许复用图片；统计图表能力保持开启；动效、几何装饰、特殊排版和几何底纹均关闭。
 把选择记入 `材料摘要.md`。
 
 ### 阶段三：设置基本版式
 
-模板模式跳过本阶段的配色采样，直接用模板的主题色与版式。
+模板模式跳过本阶段的配色采样，直接用模板的主题色与版式。快速模式先读 `references/fast-mode.md`：无模板只生成一个 seed 和一个候选；有模板只做一次紧凑 inventory 并复用结果。
 
 1. 跑采样器，得到若干套配色 / 基本版式常量 / 逐页版式候选：
    ```
    <py> scripts/sample_style.py --seed <随机整数> --count 3 --scene <学术|工程|商务|政务|教育> --pages <页数或类型序列> [--force-color HEX]
    ```
    采样只提供随机性，**最终取舍归你**：觉得不合适可以换 seed、改色或手调；用户指定了颜色就用 `--force-color` 强制采用。
-   快速模式直接取第 1 套。
+   普通流程取第 1 套至第 3 套比较；快速模式用 `--count 1`，直接取唯一候选并保留 seed 以便复现。
 2. ⛔ 把选定的配色（色值）与版式风格告诉用户，没反对再往下（快速模式不停）。
 3. 复制渲染器三件套到项目：`scripts/render_pptx.py`、`text_measure.py`、`deck_check.py` → `ppt-suggestion 的结果/渲染器/`。
    用 `sample_style.py --seed <种子> --emit-constants <候选序号>` 输出的常量块替换副本顶部的常量；还要改风格就改副本，**不改 skill 原件**。
@@ -86,11 +85,11 @@ officecli 二进制下载失败时的处理见 `README.md` 的"安装"一节。�
 
 ### 阶段四：生成内容与微调版式（按 story.md + humanize.md + deck-schema.md）
 
-1. 按 `story.md` 写 `STORY.md`：意图（五句）→ 骨架（目录与章节一一对应、相邻页版式不同）→ 逐页。
-2. **去 AI 味（必经步骤）**：`STORY.md` 与 `deck.json` 的全部文本按 `humanize.md` 的**全量规则**逐条自查。
+1. 完整或普通 Quick 按 `story.md` 写 `STORY.md`：意图（五句）→ 骨架（目录与章节一一对应、相邻页版式不同）→ 逐页。fast-lite 只保留一次紧凑事实清单，不生成完整 `STORY.md` 或设计锁定文件。
+2. **去 AI 味（必经步骤）**：完整或普通 Quick 对 `STORY.md` 与 `deck.json` 的全部文本按 `humanize.md` 的**全量规则**逐条自查；fast-lite 直接对 `deck.json` 做同样的文本检查。
 3. ⛔ **大纲确认门**：向用户列出每页一行结论句，没反对再往下（快速模式跳过；资料缺口改为交付时如实列出）。
-4. 按 `deck-schema.md` 写 `deck.json`；每页 block 以采样出的版式候选为起点，按内容微调。
-   **渲染前跑渲染器副本里的校验**：`<py> 渲染器/deck_check.py deck.json`（用了特殊排版拓展加 `--extra-kinds bignum,asym`；模板模式用 `scripts/deck_check.py deck.json --template-mode`），失败按错误解读表修复，禁止跳过。
+4. 按 `deck-schema.md` 写 `deck.json`；每页 block 以采样出的版式候选为起点，按内容微调。快速模式仍运行 `deck_check.py`，保留公式、图表、越界、溢出和严重重叠等 Hard 校验。
+   **渲染前跑渲染器副本里的校验**：`<py> 渲染器/deck_check.py deck.json`（用了特殊排版拓展加 `--extra-kinds bignum,asym,quote,diagonal,radial,ring,marginalia,concentric,quadrant`；模板模式用 `scripts/deck_check.py deck.json --template-mode`），失败按错误解读表修复，禁止跳过。
    正文里的行内数学写成 `$LaTeX$`（如 `$n_l$`），字面美元符号写 `\$`；语法见 `deck-schema.md`。
 5. 产物：`STORY.md`、`deck.json`。
 
@@ -105,7 +104,7 @@ officecli 二进制下载失败时的处理见 `README.md` 的"安装"一节。�
    <py> scripts/template_fill.py --template 模板.pptx --deck deck.json --map map.json --output "<中文文件名>.pptx"
    ```
 3. deck 含 `formula` block 或正文含 `$...$` 行内公式时，渲染后跑：`<py> scripts/formula.py "<中文文件名>.pptx"`，把占位框与行内标记换成 PowerPoint 原生可编辑公式。
-4. 启用了拓展就按各自 `extensions/<名>/EXT.md` 处理；后处理类拓展在公式之后、结果校验之前运行。
+4. 图表能力默认可用：有真实数据关系时使用 `chart` block，优先生成 `power_pptx` 原生图表；类型不支持或需要兼容 Office 时明确使用 `fallback: "svg"`，依赖 `matplotlib` 与 `cairosvg`。启用了其他拓展就按各自 `extensions/<名>/EXT.md` 处理；后处理类拓展在公式之后、结果校验之前运行。几何装饰的底纹只在用户明确允许且通过安全门槛时使用。
 5. 渲染器内置 deck 校验，失败会非 0 退出并打印原因：按报错改 `deck.json` 再跑。渲染与校验是前台短任务，不要放后台。
 6. 产物：`.pptx`（所有文字、图表、形状、公式均为原生可编辑）。
 

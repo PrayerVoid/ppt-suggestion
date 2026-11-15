@@ -9,7 +9,7 @@
 - 最终效果像该领域专业人士手工制作，**没有明显的 AI 生成痕迹**（视觉与文案双重去 AI 味）。
 - 术语、名称、单位、数字与原始资料**完全一致**，不虚构、不夸大。
 - 用户要求完全遵循模板时，用 officecli 直接编辑模板副本，继承模板的设计语言。
-- 输出全部为**原生可编辑对象**，包括数学公式（PowerPoint 内可直接编辑的 OMML 公式）。
+- 输出优先为**原生可编辑对象**，包括数学公式（PowerPoint 内可直接编辑的 OMML 公式）；图表在原生类型不支持或兼容性不稳定时允许用 SVG 兜底。
 - 配色与版式由随机采样器给出候选，AI 保留最终裁量，避免千篇一律。
 
 ## 工作流（六阶段，严格串行）
@@ -23,11 +23,13 @@
 | 阶段 | 做什么 | 产物 | 门禁 |
 | --- | --- | --- | --- |
 | ① 阅读材料 | 转 Markdown、判断领域、模板分析、充分性检查 | `材料摘要.md`、`模板摘要.md` | 资料缺口先问用户，绝不臆造 |
-| ② 询问用户 | 场合受众页数；是否完全遵循模板、快速模式、复用资料图片、可选拓展 | 记入 `材料摘要.md` | ⛔ 一次问完 |
+| ② 询问用户 | 场合受众页数；是否完全遵循模板、快速模式、复用资料图片、可选拓展（图表默认开启） | 记入 `材料摘要.md` | ⛔ 一次问完 |
 | ③ 设置基本版式 | `sample_style.py` 采样配色与版式，复制渲染器三件套并改常量 | `渲染器/`、`style.json` | 配色确认（快速模式跳过） |
 | ④ 生成内容与微调版式 | 意图→骨架→逐页；全量去 AI 味；`deck_check.py` | `STORY.md`、`deck.json` | 大纲确认（快速模式跳过） |
-| ⑤ 排版渲染 | 渲染器副本 / `template_fill.py` → `formula.py` → 可选拓展 | `<中文名>.pptx` | 校验失败禁止跳过 |
+| ⑤ 排版渲染 | 渲染器副本 / `template_fill.py` → `formula.py` → `chart` / 可选拓展 | `<中文名>.pptx` | 校验失败禁止跳过 |
 | ⑥ 结果校验 | `validate_pptx.py` + `render_preview.py` 出图逐页复核 | `校验报告.md` | 修复闭环后交付 |
+
+完整模式会消耗更多 token 和时间，但可控性更强；快速模式按 `references/fast-mode.md` 走 fast-lite 路径，减少候选、规划和确认，保留严重错误校验。启用动效、几何装饰或特殊排版会增加额外 token、时间和出错概率；几何底纹还需单独明确允许。
 
 ## 目录结构
 
@@ -43,6 +45,7 @@ ppt-suggestion/
 │   ├── deck-schema.md       # deck.json 结构说明与质量检查清单
 │   ├── design.md            # 视觉/版面/密度边界（采样先验 + 硬约束）
 │   ├── template-inherit.md  # 模板模式：officecli 编辑模板副本
+│   ├── fast-mode.md         # 完整 / Quick / fast-lite 路径
 │   └── validation.md        # 阶段六：结果校验（Hard/Soft 分级）
 ├── scripts/
 │   ├── source_to_md.py      # HTML/URL/文本 → Markdown
@@ -56,11 +59,12 @@ ppt-suggestion/
 │   ├── ocli.py              # officecli 调用封装（定位二进制、batch、落盘）
 │   ├── validate_pptx.py     # 输出校验（重叠/越界/溢出/图片/版式）
 │   └── render_preview.py    # pptx 逐页转 PNG 供目视自查
-└── extensions/              # 可选拓展，默认关闭，用户选了才读
+└── extensions/              # 图表默认开启；其余拓展用户选了才读
     ├── README.md            # 拓展索引
+    ├── charts/              # 图表：原生 power_pptx 优先，必要时 SVG 兜底
     ├── animation/           # 动效：转场 + 入场（power_pptx）
-    ├── geometry-deco/       # 几何装饰
-    └── special-layout/      # 特殊排版：bignum、asym
+    ├── geometry-deco/       # 几何装饰：多种可复用几何母题
+    └── special-layout/      # 特殊排版：核心数字、非对称、引文、斜切、关系、边注、层级与四象限
 ```
 
 ## 安装
@@ -71,7 +75,7 @@ python -m venv .venv
 .venv/Scripts/python -m officecli install
 ```
 
-- Python 包（`power-pptx`、`officecli-sdk`、`lxml`、`Pillow`）国内走清华源 `https://pypi.tuna.tsinghua.edu.cn/simple`。`power-pptx` 的导入名是 `power_pptx`。
+- Python 包（`power-pptx`、`officecli-sdk`、`lxml`、`Pillow`、`matplotlib`、`cairosvg`）国内走清华源 `https://pypi.tuna.tsinghua.edu.cn/simple`。`power-pptx` 的导入名是 `power_pptx`；图表 SVG 兜底依赖 `matplotlib` 与 `cairosvg`。
 - `python -m officecli install` 运行官方安装脚本，从 `d.officecli.ai` 或 GitHub 下载 officecli 二进制，国内可能超时。清华源、npm 镜像和 Gitee 镜像（`gitee.com/zhu_evan/OfficeCLI` 只有源码、没有发行版）都不提供二进制。
 - 下载失败时手动安装：到 <https://github.com/iOfficeAI/OfficeCLI/releases> 下载本平台文件（Windows 为 `officecli-win-x64.exe`，其它平台见同页文件名），对照同页 `SHA256SUMS` 校验，放到 `%LOCALAPPDATA%\OfficeCLI\officecli.exe`（Windows）或 `~/.local/bin/officecli`（macOS/Linux）。`scripts/ocli.py` 会先查 PATH，再查这两个位置。
 

@@ -3,7 +3,7 @@
 
 用法:
   python apply_animation.py in.pptx --deck deck.json --out out.pptx \
-      [--transition fade|push|morph|none] [--entrance fade|wipe|appear|none] [--com-check]
+      [--transition fade|push|wipe|cover|cut|morph|none] [--entrance fade|wipe|appear|none] [--com-check]
 
 入场动画按 PowerPoint 自己写出的标准结构生成（mainSeq 主序列、每个 block 一次点击、
 块内其余形状 with-previous），不使用 power_pptx 的 animations（它不写 mainSeq，
@@ -31,12 +31,15 @@ A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 TRANSITIONS = {
     "fade": MSO_TRANSITION.FADE,
     "push": MSO_TRANSITION.PUSH,
+    "wipe": MSO_TRANSITION.WIPE,
+    "cover": MSO_TRANSITION.COVER,
+    "cut": MSO_TRANSITION.CUT,
     "morph": MSO_TRANSITION.MORPH,
 }
-# presetID, presetSubtype, animEffect 的 filter（None 表示只有 set，无 animEffect）；取自 PowerPoint 写出的文件
+# presetID, presetSubtype, animEffect 的 filter（None 表示只有 set）；取自 PowerPoint 写出的文件
 PRESETS = {
     "fade": (10, 0, "fade"),
-    "wipe": (22, 4, "wipe(down)"),
+    "wipe": (8, 2, "wipe(dir=left)"),
     "appear": (1, 0, None),
 }
 ANIMATED_TYPES = {"content", "catalog"}
@@ -250,7 +253,7 @@ def main():
     ap.add_argument("pptx")
     ap.add_argument("--deck", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--transition", choices=["fade", "push", "morph", "none"], default="fade")
+    ap.add_argument("--transition", choices=["fade", "push", "wipe", "cover", "cut", "morph", "none"], default="fade")
     ap.add_argument("--entrance", choices=["fade", "wipe", "appear", "none"], default="fade")
     ap.add_argument("--com-check", action="store_true")
     a = ap.parse_args()
