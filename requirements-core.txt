@@ -1,0 +1,6 @@
+# 国内走清华源安装：
+#   pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements-core.txt
+# 核心：无模板渲染、模板继承、结构校验和包检查
+power-pptx
+officecli-sdk
+lxml

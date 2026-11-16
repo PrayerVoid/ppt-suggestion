@@ -260,7 +260,9 @@ def overlap_key(a, b):
     fa, fb = bbox(first), bbox(second)
     pattern = tuple((sh.name, round(box[2], 1), round(box[3], 1))
                     for sh, box in zip(ordered, (fa, fb)))
-    texts = tuple(sh.text_frame.text for sh in ordered) if all(has_text(sh) for sh in ordered) else ()
+    # Include text for every text-bearing member, even when the other member is
+    # a filled decoration. Changing a label must invalidate its baseline match.
+    texts = tuple(sh.text_frame.text if has_text(sh) else None for sh in ordered)
     return ("overlap", pattern, round(round(fb[0] - fa[0], 4), 2), round(round(fb[1] - fa[1], 4), 2), texts)
 
 

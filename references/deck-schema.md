@@ -52,7 +52,7 @@
     {
       "kind": "agenda",
       "items": [
-        { "num": "01", "title": "先把算力收成统一底座", "note": "Token Factory" }
+        { "num": "01", "title": "算力统一收口为底座", "note": "Token Factory" }
       ]
     }
   ]
@@ -67,7 +67,7 @@
 {
   "type": "section",
   "num": "01",
-  "title": "先把算力收成统一底座",
+  "title": "算力统一收口为底座",
   "subtitle": "Token Factory"
 }
 ```
@@ -100,7 +100,7 @@
 本页「所以呢」。浅灰横条 + 强调色左边条，全稿 3–6 条。
 
 ```json
-{ "kind": "insight", "kicker": "结论", "text": "先建计量，再谈治理。" }
+{ "kind": "insight", "kicker": "结论", "text": "计量体系支撑治理。" }
 ```
 
 ### stats
@@ -256,7 +256,7 @@
   },
   "right": {
     "kicker": "工厂思维",
-    "title": "先把生产要素标准化",
+    "title": "生产要素统一标准",
     "items": ["Token 统一计量，按团队做 Chargeback", "能力进 Skills Hub，一次生产多处复用"]
   }
 }

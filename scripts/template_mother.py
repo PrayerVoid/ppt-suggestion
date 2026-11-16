@@ -21,7 +21,33 @@ import ocli
 from power_pptx import Presentation
 
 from pptx_package import PackageError, package_problems, repair_package
+from analyze_template import walk_shapes
 from template_fill import resolve_key, scan_template, slide_path, MapError
+
+
+def write_text_evidence(path, manifest, output_name=None):
+    """Record the actual text left in each generated mother page."""
+    prs = Presentation(str(path))
+    if not any(getattr(slide, "shapes", None) is not None for slide in prs.slides):
+        return None
+    evidence = {"output": str(output_name or path), "pages": []}
+    for index, slide in enumerate(prs.slides):
+        shapes = []
+        for rec in walk_shapes(list(getattr(slide, "shapes", ()) or ())):
+            shape = rec["shape"]
+            text = ""
+            if getattr(shape, "has_text_frame", False):
+                text = shape.text_frame.text
+            if text.strip():
+                shapes.append({"key": rec["key"], "kind": rec["kind"], "text": text})
+        item = manifest["mothers"][index]
+        evidence["pages"].append({"output_page": index + 1,
+                                  "name": item.get("name", f"mother-{index + 1}"),
+                                  "template_slide": item["template_slide"],
+                                  "text": shapes})
+    target = Path(str(output_name or path) + ".text-evidence.json")
+    target.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return target
 
 
 def build_ops(manifest, pages):
@@ -87,6 +113,8 @@ def main():
         print(f"母页 manifest 有误: {exc}", file=sys.stderr)
         return 2
     staging = None
+    evidence_tmp = None
+    evidence = None
     try:
         output.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary = tempfile.mkstemp(
@@ -111,20 +139,27 @@ def main():
         actual = len(Presentation(str(staging)).slides)
         if actual != expected:
             raise PackageError(f"母页输出页数应为 {expected}，实际 {actual}")
+        evidence_tmp = write_text_evidence(staging, manifest)
         if output.exists():
             ocli.close(str(output))
         os.replace(staging, output)
+        if evidence_tmp is not None:
+            evidence = output.with_name(output.name + ".text-evidence.json")
+            os.replace(evidence_tmp, evidence)
     except Exception as exc:
         print(f"母页生成失败，未发布新输出:\n{exc}", file=sys.stderr)
         return 1
     finally:
         if staging is not None:
             staging.unlink(missing_ok=True)
+        if evidence_tmp is not None:
+            evidence_tmp.unlink(missing_ok=True)
     if plan is not None:
         write_plan(plan, output)
     for repair in repairs:
         print(f"OOXML 修复: {repair}", file=sys.stderr)
-    print(f"{output}（{expected} 个内容页母页）")
+    suffix = f"，文本证据 {evidence.name}" if evidence is not None else ""
+    print(f"{output}（{expected} 个内容页母页{suffix}）")
     return 0
 
 

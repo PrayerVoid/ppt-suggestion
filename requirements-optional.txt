@@ -1,0 +1,7 @@
+# 可选能力：图片容量预检、PDF/图片资料读取、图表 SVG/PNG 兜底
+# 按需安装：
+#   pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements-optional.txt
+Pillow
+pymupdf
+matplotlib
+cairosvg

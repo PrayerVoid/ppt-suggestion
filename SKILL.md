@@ -23,6 +23,8 @@ python -m venv .venv
 .venv/Scripts/python -m officecli install
 ```
 
+`requirements.txt` 汇总核心与可选依赖；只跑核心渲染和模板流程可安装 `requirements-core.txt`，需要 PDF、图片预检或图表 SVG/PNG 兜底时再安装 `requirements-optional.txt`。可选包缺失时按 README 的降级规则执行，不把缺少可选能力误报为核心流程失败。
+
 macOS/Linux 把 `.venv/Scripts/python` 换成 `.venv/bin/python`。下文 `<py>` 都指这个 venv 的 python（导入名是 `power_pptx`）。
 officecli 二进制下载失败时的处理见 `README.md` 的"安装"一节。脚本通过 `scripts/ocli.py` 自动定位二进制。
 
@@ -116,6 +118,7 @@ officecli 二进制下载失败时的处理见 `README.md` 的"安装"一节。�
    ```
    <py> scripts/template_fill.py --template 模板.pptx --deck deck.json --map map.json --output "<中文文件名>.pptx"
    ```
+   `template_fill.py` 在 OfficeCLI 之前检查替换文字的容量（含竖排、不换行和 clone group 缩放）及替换图片的源像素与显示倍率。容量不足就换页、拆页或缩短标签；源图不清晰就换图，不用压缩字号硬塞。半自主母页生成后会输出 `<mothers.pptx>.text-evidence.json`，以清空后的实际文字作为 manifest 复核依据。
 3. deck 含 `formula` block 或正文含 `$...$` 行内公式时，渲染后跑：`<py> scripts/formula.py "<中文文件名>.pptx"`，把占位框与行内标记换成 PowerPoint 原生可编辑公式。
 4. 图表能力默认可用：有真实数据关系时使用 `chart` block。完全自主模式优先由 `power_pptx` 生成原生图表；完全遵循模板和半自主模式由 OfficeCLI 在模板副本中保留已有图表，或通过 `fields.chart` 同位替换顶层图片/图表。当前 `template_fill.py` 不支持任意坐标新增图表，也不自动执行 SVG 回退；需要时单独走明确的 OfficeCLI 编辑或 SVG 图片替换流程并校验。完全自主渲染器可显式用 `fallback: "svg"`，依赖 `matplotlib` 与 `cairosvg`。启用了其他拓展就按各自 `extensions/<名>/EXT.md` 处理；后处理类拓展在公式之后、结果校验之前运行。几何装饰的底纹只在用户明确允许且通过安全门槛时使用。
 5. 渲染器内置 deck 校验，失败会非 0 退出并打印原因：按报错改 `deck.json` 再跑。渲染与校验是前台短任务，不要放后台。
@@ -130,7 +133,7 @@ officecli 二进制下载失败时的处理见 `README.md` 的"安装"一节。�
    ```
 
    用 Read 看每一页（含公式的页加 `--render native` 才能看到真实公式），再对照 `validation.md` 的 Hard/Soft 清单复核。看见文字伸出标签、卡片或文本框即阻断交付，即使脚本报告为零。小修限位置、字号（±2pt 内）、间距、对齐、底衬；仍装不下就退回阶段四或五，重选模板页、拆分内容或调整结构，再重渲染、重校验。预览图不交付。
-3. 结构检查、HTML/原生静态目视检查、目标应用打开和实际放映分别记录。`template_animation.py` 只核对 XML 计划，`officecli validate` 与 HTML 预览不证明 Mac Office 无修复提示或动画播放；未做目标应用打开或放映时必须分别明确说明。资料缺口如实指出，不编造填充。
+3. 结构检查、HTML/原生静态目视检查、目标应用打开和实际放映分别记录，使用 `references/playback-report.md`。`template_animation.py` 只核对 XML 计划，`officecli validate` 与 HTML 预览不证明 Mac Office 无修复提示或动画播放；未做目标应用打开或放映时必须分别明确说明。资料缺口如实指出，不编造填充。
 4. 交付：只给 `.pptx` **绝对路径**；如需说明假设、模板继承回退或缺口，简短列出。
 
 ## 纪律

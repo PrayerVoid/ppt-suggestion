@@ -37,7 +37,9 @@
 ppt-suggestion/
 ├── README.md                # 本文件
 ├── SKILL.md                 # 工作流总控：六阶段、门禁、纪律、文件导航
-├── requirements.txt         # Python 依赖（国内走清华源）
+├── requirements.txt         # 完整 Python 依赖（核心 + 可选，国内走清华源）
+├── requirements-core.txt    # 核心依赖：渲染、模板、结构校验
+├── requirements-optional.txt # 可选依赖：PDF、图片预检、图表 SVG/PNG 兜底
 ├── references/
 │   ├── source-intake.md     # 阶段一：阅读材料
 │   ├── story.md             # 阶段四：意图/骨架/逐页/版式选用
@@ -47,15 +49,18 @@ ppt-suggestion/
 │   ├── template-inherit.md  # 完全遵循模板：OfficeCLI 编辑模板副本
 │   ├── template-semi-autonomous.md # 半自主：内容页母页与组合扩展
 │   ├── fast-mode.md         # 完整 / Quick / fast-lite 路径
-│   └── validation.md        # 阶段六：结果校验（Hard/Soft 分级）
+│   ├── validation.md        # 阶段六：结果校验（Hard/Soft 分级）
+│   └── playback-report.md   # PowerPoint 打开、修复提示与实际放映记录模板
 ├── scripts/
 │   ├── source_to_md.py      # HTML/URL/文本 → Markdown
 │   ├── analyze_template.py  # 模板分析 → 模板摘要
 │   ├── sample_style.py      # 配色 / 基本版式 / 内容版式随机采样器
+│   ├── palette_check.py     # Node 色板检查不可用时的 Python 基础回退
 │   ├── deck_check.py        # deck.json 结构校验（渲染前）
 │   ├── render_pptx.py       # 渲染器原件（阶段三复制到项目里使用）
 │   ├── text_measure.py      # 文本估算（渲染器/校验共用）
 │   ├── template_fill.py     # 完全遵循/半自主：OfficeCLI 复制、填充、图表替换与组合扩展
+│   ├── template_capacity.py # 模板文字容量与替换图片源分辨率前置检查
 │   ├── template_mother.py   # 半自主：从模板正文页生成清空内容的母页
 │   ├── template_animation.py # 模板动效策略、计划、应用与生成后语义核对
 │   ├── animation_inventory.py # 母版/版式/实际页及 MC 动画、转场静态清单
@@ -81,7 +86,10 @@ python -m venv .venv
 .venv/Scripts/python -m officecli install
 ```
 
-- Python 包（`power-pptx`、`officecli-sdk`、`lxml`、`Pillow`、`matplotlib`、`cairosvg`）国内走清华源 `https://pypi.tuna.tsinghua.edu.cn/simple`。`power-pptx` 的导入名是 `power_pptx`；图表 SVG 兜底依赖 `matplotlib` 与 `cairosvg`。
+完整安装使用 `requirements.txt`，它包含 `requirements-core.txt` 和 `requirements-optional.txt`。只运行核心渲染和模板流程时可安装 `requirements-core.txt`；需要 PDF 读取、图片容量预检或图表 SVG/PNG 兜底时再安装 `requirements-optional.txt`。缺少 Pillow、PyMuPDF、matplotlib 或 cairosvg 时，相关能力会按 README 中的降级规则处理；核心流程不因可选包缺失而无法启动。
+
+- Python 包（`power-pptx`、`officecli-sdk`、`lxml`）是核心依赖；`Pillow`、`pymupdf`、`matplotlib`、`cairosvg` 属于可选依赖。`power-pptx` 的导入名是 `power_pptx`；图表 SVG 兜底依赖 `matplotlib` 与 `cairosvg`。模板图片容量预检在 Pillow 缺失时仍可读取 PNG/JPEG 头部；无法识别源图尺寸会明确报错。
+- dataviz 的完整色板检查优先运行 Node 脚本；没有 Node.js 时运行 `python scripts/palette_check.py "#1A1A1A,#C45A3C,#2D6A73" --mode light`。Python 回退只检查基础明度、对比度和相邻颜色，不替代完整 CVD 检查。
 - `python -m officecli install` 运行官方安装脚本，从 `d.officecli.ai` 或 GitHub 下载 officecli 二进制，国内可能超时。清华源、npm 镜像和 Gitee 镜像（`gitee.com/zhu_evan/OfficeCLI` 只有源码、没有发行版）都不提供二进制。
 - 下载失败时手动安装：到 <https://github.com/iOfficeAI/OfficeCLI/releases> 下载本平台文件（Windows 为 `officecli-win-x64.exe`，其它平台见同页文件名），对照同页 `SHA256SUMS` 校验，放到 `%LOCALAPPDATA%\OfficeCLI\officecli.exe`（Windows）或 `~/.local/bin/officecli`（macOS/Linux）。`scripts/ocli.py` 会先查 PATH，再查这两个位置。
 

@@ -96,6 +96,8 @@ def _check_chart(block, slide_no):
         if not isinstance(categories, list) or not categories:
             errs.append(f"第 {slide_no} 页 chart 缺少 categories")
             categories = []
+        if len(categories) == 1:
+            errs.append(f"第 {slide_no} 页 chart 只有一个数据点，不能表达比较关系；改用 stats/lead，或补齐可比类别")
         for si, item in enumerate(series, start=1):
             if not isinstance(item, dict) or not str(item.get("name", "")).strip():
                 errs.append(f"第 {slide_no} 页 chart 第 {si} 个 series 缺少 name")

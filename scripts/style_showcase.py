@@ -123,7 +123,7 @@ def render_candidate(prs, candidate, scene):
     add_text(slide, f"STYLE SHOWCASE  /  {scene or '默认场景'}  /  CANDIDATE {candidate['id'] + 1:02d}",
              0.85, 0.34, 6.5, 0.25, 9, subtle, True)
     add_text(slide, f"风格候选 {candidate['id'] + 1:02d}", 0.85, 0.72, 6.4, 0.55, 27, text, True)
-    add_text(slide, "先看系统参数，再看一个内容块样例；页面只用于比较采样结果。",
+    add_text(slide, "系统参数与内容块样例用于比较采样结果。",
              0.85, 1.32, 6.6, 0.28, 11, subtle)
 
     # 色板

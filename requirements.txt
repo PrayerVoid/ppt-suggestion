@@ -1,12 +1,4 @@
-# 国内走清华源安装：
+# 完整安装（核心 + 可选能力）：
 #   pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
-# officecli 二进制不在 pip 包里，装完后执行 python -m officecli install（见 README.md）
-power-pptx
-officecli-sdk
-lxml
-Pillow
-# 读 PDF 与抽图用（见 references/source-intake.md）
-pymupdf
-# 统计图表类型不支持原生 PowerPoint 时的 SVG/PNG 兜底
-matplotlib
-cairosvg
+-r requirements-core.txt
+-r requirements-optional.txt

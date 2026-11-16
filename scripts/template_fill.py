@@ -128,6 +128,8 @@ def chart_props(chart, box, k):
     series = chart.get("series") or []
     if not categories or not series:
         raise MapError(f"map 第 {k} 项 chart 必须同时有 categories 和 series")
+    if len(categories) == 1:
+        raise MapError(f"map 第 {k} 项 chart 只有一个数据点，不能表达比较关系；改用 stats/lead 或补齐可比类别")
     if not any(chart.get(field) for field in ("source", "table_view", "accessibility_note")):
         raise MapError(f"map 第 {k} 项 chart 必须提供 source、table_view 或 accessibility_note")
     data = []
@@ -167,6 +169,8 @@ def chart_props(chart, box, k):
 
 def build_ops(maps, pages, map_dir):
     """返回 (ops, 期望文字校验表, 公式 sidecar 列表)。"""
+    from template_capacity import check_box, check_image, check_text
+
     n_tpl = len(pages)
     ops, checks, formulas = [], [], []
     fno = 0
@@ -197,6 +201,10 @@ def build_ops(maps, pages, map_dir):
                 text = val if isinstance(val, str) else val["text"]
                 if rec["kind"] != "text":
                     raise MapError(f"map 第 {k} 项：" + explain_wrong_kind(key, rec, page, "填文字"))
+                capacity = check_text(rec["shape"], text, f"map 第 {k} 项 {key!r}",
+                                      size=val.get("size") if isinstance(val, dict) else None)
+                if capacity:
+                    raise MapError("；".join(capacity))
                 props = {"text": text}
                 if isinstance(val, dict) and "size" in val:
                     props["size"] = val["size"]
@@ -209,6 +217,9 @@ def build_ops(maps, pages, map_dir):
                 img = img if img.is_absolute() else (map_dir / img)
                 if not img.exists():
                     raise MapError(f"map 第 {k} 项：图片不存在 {img}")
+                resolution = check_image(img, rec["shape"], f"map 第 {k} 项 {key!r}")
+                if resolution:
+                    raise MapError("；".join(resolution))
                 # 模板图片位带着原照片的裁剪，不重置会把新图裁掉一块
                 ops.append({"command": "set", "path": base, "props": {"src": str(img.resolve()), "crop": "0"}})
                 checks.append(("image", k, shifted(rec["steps"], removes, key), key,
@@ -273,6 +284,17 @@ def build_ops(maps, pages, map_dir):
                 )
                 if text is None:
                     raise MapError(f"map 第 {k} 项 clone_groups[{j}]：字段 {field_key!r} 只支持字符串或 {{\"text\":..}}")
+                source_width = max(1, source["shape"].width or 1)
+                source_height = max(1, source["shape"].height or 1)
+                target_width = to_emu(clone["width"], "clone width") if "width" in clone else source_width
+                target_height = to_emu(clone["height"], "clone height") if "height" in clone else source_height
+                child_width = child["shape"].width * target_width / source_width
+                child_height = child["shape"].height * target_height / source_height
+                capacity = check_text(child["shape"], text, f"map 第 {k} 项 clone_groups[{j}] {field_key!r}",
+                                      width=child_width, height=child_height,
+                                      size=field_val.get("size") if isinstance(field_val, dict) else None)
+                if capacity:
+                    raise MapError("；".join(capacity))
                 props = {"text": text}
                 if isinstance(field_val, dict) and "size" in field_val:
                     props["size"] = field_val["size"]
@@ -287,8 +309,14 @@ def build_ops(maps, pages, map_dir):
                 raise MapError(f"map 第 {k} 项 extra_shapes[{j}]：color 只能用主题色名 {sorted(SCHEME_COLORS)}，当前 {color!r}")
             props = {"text": ex["text"], "color": color, "name": f"EXTRA_{k}_{j}",
                      "size": ex.get("size", 14)}
+            dimensions = {}
             for p in ("x", "y", "width", "height"):
-                props[p] = f"{to_emu(ex[p], f'map 第 {k} 项 extra_shapes[{j}].{p}')}emu"
+                dimensions[p] = to_emu(ex[p], f"map 第 {k} 项 extra_shapes[{j}].{p}")
+                props[p] = f"{dimensions[p]}emu"
+            capacity = check_box(ex["text"], dimensions["width"], dimensions["height"],
+                                 ex.get("size", 14), f"map 第 {k} 项 extra_shapes[{j}]")
+            if capacity:
+                raise MapError("；".join(capacity))
             if ex.get("bold"):
                 props["bold"] = True
             ops.append({"command": "add", "parent": f"/slide[{cur}]", "type": "textbox", "props": props})

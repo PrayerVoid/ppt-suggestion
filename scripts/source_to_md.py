@@ -95,7 +95,13 @@ def html_to_markdown(html: str) -> str:
             elif tag == "img":
                 src_attr = child.get("src") or ""
                 alt = child.get("alt") or ""
-                if src_attr:
+                if src_attr.startswith("data:"):
+                    # Data URIs can be megabytes of base64 and are not useful to
+                    # downstream text planning. Keep a visible resource marker.
+                    label = alt or "内嵌图片"
+                    lines.append(f"[图片资源：{label}（HTML 内嵌，未展开）]")
+                    lines.append("")
+                elif src_attr:
                     lines.append(f"![{alt}]({src_attr})")
                     lines.append("")
             elif tag in ("br",):

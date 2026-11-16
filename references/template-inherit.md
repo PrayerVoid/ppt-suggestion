@@ -12,7 +12,8 @@
 2. 按 deck.json 每页的类型与内容量，为它挑一页模板原页。同一模板页可复用多次；模板里没被选中的原页会删除。
 3. 写 `map.json`（格式见 §2）。
 4. `python template_fill.py --template 模板.pptx --deck deck.json --map map.json --output "<中文名>.pptx"`。
-   先按 `references/template-animation.md` 生成编辑前计划；可用 `--animation-plan-only` 只查看计划。临时副本中批量编辑后按 `auto|preserve|strip` 处理对象动画和转场，再以 `repair_package(..., repair_animations=False)` 检查包引用、页数、内容落位、组合尺寸和布局，最后运行 `template_animation.py`。任何一步失败保留上一次成功输出；仍须完成逐页目视检查。
+   运行 OfficeCLI 前，`template_fill.py` 会按模板文本框的字号、内边距、换行方式和尺寸预估替换文字容量；竖排标签、不换行标题和缩放后的 clone group 也会检查。替换图片同时核对源文件像素与显示尺寸，源图有效分辨率低于 70% 时直接拒绝。容量或清晰度不合适就换模板页、缩短内容或换源图。
+   再按 `references/template-animation.md` 生成编辑前计划；可用 `--animation-plan-only` 只查看计划。临时副本中批量编辑后按 `auto|preserve|strip` 处理对象动画和转场，再以 `repair_package(..., repair_animations=False)` 检查包引用、页数、内容落位、组合尺寸和布局，最后运行 `template_animation.py`。任何一步失败保留上一次成功输出；仍须完成逐页目视检查。
 5. 有公式时：`python formula.py "<中文名>.pptx"`（读取 `<输出名>.formulas.json`，写入原生可编辑公式）。
 6. `validate_pptx.py "<中文名>.pptx"` 与 officecli 出图复核（见 validation.md）。
 

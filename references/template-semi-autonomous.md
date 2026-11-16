@@ -108,6 +108,8 @@
 
 7. 最终检查：
 
+   `template_fill.py` 在 OfficeCLI 运行前生成替换文字容量与源图片清晰度门禁。章节标签、竖排文字和缩放后的组合按实际显示尺寸估算；固定装饰的 baseline 告警只可降低装饰自身的 Soft 噪声，不能豁免新增文字溢出、图片模糊或内容碰撞。母页生成后会写出 `<mothers.pptx>.text-evidence.json`，记录清空后实际仍存在的文字；母页 manifest 有遗漏时依据该文件回补，不凭旧模板摘要判断。
+
    ```text
    <py> scripts/template_fill.py --template 模板.pptx --deck deck.json \
        --map map.json --output 输出.pptx
