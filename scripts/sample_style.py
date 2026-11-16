@@ -19,10 +19,9 @@ import sys
 SAT_HIGH, SAT_HIGH_W = 0.6, 0.05    # design.md:26 禁鲜艳颜色：高饱和强调色概率大幅下降
 SAT_LOW, SAT_LOW_W = 0.18, 0.3      # design.md:16 低饱和但要可辨：近灰色略降
 PRIMARY_DEG, PRIMARY_W = 15, 0.2    # design.md:16 避免纯色：近纯红/绿/蓝（且 S>0.8）再降
-G_HUE, G_BIAS_W = (90, 210), 2.0    # design.md:16 RGB 掺 G：绿青色相段概率升高
 L_MID, L_SIGMA = 0.38, 0.10         # design.md:16 低亮度：强调色亮度集中在中低段
 PURE_BLACK_W = 0.1                  # design.md:16 避免纯色：正文近纯黑概率下降
-SCENE_W = 1.8                       # 场景色相倾向（仅软倾向，不禁止其他色相）
+SCENE_W = 1.35                      # 场景色相仅轻微加权；低饱和不等于偏绿
 ASYM_W, CARDS_W = 1.3, 0.4          # design.md:68 非对称/结构版式加权；design.md:27 卡片降权
 
 SCENE_HUE = {"学术": (200, 260), "工程": (170, 230), "商务": (190, 250),
@@ -91,7 +90,7 @@ def palette_violations(p, skip_accent_white=False):
 
 
 # ---------------- 配色采样 ----------------
-def accent_weight(h, s, l, scene):
+def accent_weight(h, s, l):
     w = 1.0
     if s > SAT_HIGH:
         w *= SAT_HIGH_W
@@ -99,21 +98,29 @@ def accent_weight(h, s, l, scene):
         w *= SAT_LOW_W
     if s > 0.8 and min(abs((h - p + 180) % 360 - 180) for p in (0, 120, 240)) < PRIMARY_DEG:
         w *= PRIMARY_W
-    if in_hue(h, G_HUE):
-        w *= G_BIAS_W
-    if scene in SCENE_HUE and in_hue(h, SCENE_HUE[scene]):
-        w *= SCENE_W
     return w * max(0.05, pow(2.718281828, -0.5 * ((l - L_MID) / L_SIGMA) ** 2))
 
 
+def pick_hue(rng, scene):
+    # 先确定色相，再在该色相内找满足对比度的 S/L，避免过滤通过率改变色相分布。
+    while True:
+        h = rng.uniform(0, 360)
+        if scene not in SCENE_HUE:
+            return h
+        weight = SCENE_W if in_hue(h, SCENE_HUE[scene]) else 1.0
+        if rng.random() < weight / SCENE_W:
+            return h
+
+
 def pick_accent(rng, scene):
+    h = pick_hue(rng, scene)
     pool = []
     while not pool:
         for _ in range(80):
-            h, s, l = rng.uniform(0, 360), rng.uniform(0.10, 0.95), rng.uniform(0.18, 0.50)
+            s, l = rng.uniform(0.10, 0.95), rng.uniform(0.18, 0.50)
             hx = hls_hex(h, l, s)
             if contrast(hx, "FFFFFF") >= MIN_TEXT:
-                pool.append((accent_weight(h, s, l, scene), hx))
+                pool.append((accent_weight(h, s, l), hx))
     return rng.choices([p[1] for p in pool], weights=[p[0] for p in pool])[0]
 
 

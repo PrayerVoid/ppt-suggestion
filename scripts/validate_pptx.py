@@ -32,7 +32,6 @@ except ImportError:
     raise SystemExit(2)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from text_measure import estimate_height as measure_height  # noqa: E402
 from text_measure import estimate_width  # noqa: E402
 
 EMU_IN = 914400.0
@@ -73,6 +72,18 @@ def is_chart(sh) -> bool:
         return False
 
 
+def chart_series_name(series) -> str:
+    """读取 power-pptx 未暴露为 .name 的 OfficeCLI c:tx/c:v 系列名。"""
+    value = str(getattr(series, "name", "") or "").strip()
+    if value:
+        return value
+    try:
+        values = series._element.xpath('.//*[local-name()="tx"]//*[local-name()="v"]/text()')
+        return str(values[0]).strip() if values else ""
+    except Exception:
+        return ""
+
+
 def bbox(sh):
     return (_inches(getattr(sh, "left", None)), _inches(getattr(sh, "top", None)),
             _inches(getattr(sh, "width", None)), _inches(getattr(sh, "height", None)))
@@ -84,7 +95,6 @@ def has_visible_fill(sh) -> bool:
         sp = sh._element.spPr
         if sp is None:
             return False
-        from lxml import etree
         ns = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
         if sp.find(f"{ns}noFill") is not None:
             return False
@@ -102,17 +112,75 @@ def has_text(sh) -> bool:
         return False
 
 
+class PositionedShape:
+    """A leaf shape with group-local coordinates mapped to slide EMU."""
+    def __init__(self, shape, transform, path):
+        self.shape = shape
+        self.path = path
+        sx, sy, dx, dy = transform
+        self.left = dx + sx * (shape.left or 0)
+        self.top = dy + sy * (shape.top or 0)
+        self.width = sx * (shape.width or 0)
+        self.height = sy * (shape.height or 0)
+
+    def __getattr__(self, name):
+        return getattr(self.shape, name)
+
+
+def positioned_shapes(shapes, transform=(1, 1, 0, 0), parent=""):
+    """Recurse through groups, including off/ext/chOff/chExt at every level."""
+    sx, sy, dx, dy = transform
+    for index, shape in enumerate(shapes, 1):
+        path = f"{parent}/{shape.name}[{index}]"
+        if shape._element.tag.endswith("}grpSp"):
+            xfrm = shape._element.grpSpPr.find(f"{A_NS}xfrm")
+            if xfrm is None:
+                yield from positioned_shapes(shape.shapes, transform, path)
+                continue
+            def point(tag, first, second, defaults):
+                node = xfrm.find(f"{A_NS}{tag}")
+                return tuple(float(node.get(key, default)) if node is not None else default
+                             for key, default in zip((first, second), defaults))
+            ox, oy = point("off", "x", "y", (0, 0))
+            ex, ey = point("ext", "cx", "cy", (1, 1))
+            cx, cy = point("chOff", "x", "y", (0, 0))
+            cex, cey = point("chExt", "cx", "cy", (ex, ey))
+            gx, gy = ex / cex if cex else 1, ey / cey if cey else 1
+            child = (sx * gx, sy * gy, dx + sx * (ox - cx * gx), dy + sy * (oy - cy * gy))
+            yield from positioned_shapes(shape.shapes, child, path)
+        else:
+            yield PositionedShape(shape, transform, path)
+
+
+def paragraph_size(paragraph):
+    explicit = [run.font.size.pt for run in paragraph.runs if run.font.size is not None]
+    if explicit:
+        return max(explicit)
+    sizes = paragraph._p.xpath('./a:pPr/a:defRPr/@sz | ./a:endParaRPr/@sz')
+    return max(float(value) / 100 for value in sizes) if sizes else 14.0
+
+
+def paragraph_width(paragraph, text):
+    tracking = [float(value) / 100 for value in paragraph._p.xpath(
+        './a:pPr/a:defRPr/@spc | .//a:rPr/@spc')]
+    spacing = max(tracking, default=0)
+    return estimate_width(text, paragraph_size(paragraph)) + max(0, len(text) - 1) * spacing / 72
+
+
 def estimate_text_height(tf, width_in: float) -> float:
-    total = 0.0
-    for p in tf.paragraphs:
-        explicit = [r.font.size.pt for r in p.runs if r.font.size is not None]
-        size = max(explicit) if explicit else 14.0
-        text = "".join(r.text for r in p.runs)
-        if not text:
-            total += size * 1.22 / 72.0
-            continue
-        ls = p.line_spacing if p.line_spacing else 1.15
-        total += measure_height(text, size, width_in, ls if isinstance(ls, float) else 1.15)
+    # Font sizes and text insets are points/EMU, even when a group uses a tiny
+    # local coordinate system. Only the shape bounds receive the group transform.
+    inner_width = max(0.01, width_in - _inches(tf.margin_left) - _inches(tf.margin_right))
+    total = _inches(tf.margin_top) + _inches(tf.margin_bottom)
+    for paragraph in tf.paragraphs:
+        size = paragraph_size(paragraph)
+        text = paragraph.text.replace("\v", "\n")
+        lines = sum(max(1, math.ceil(paragraph_width(paragraph, line) / inner_width))
+                    for line in text.split("\n")) if tf.word_wrap is not False else len(text.split("\n"))
+        ls = paragraph.line_spacing
+        line_height = ls.pt / 72 if hasattr(ls, "pt") else size * 1.22 * (ls or 1.0) / 72
+        total += lines * line_height
+        total += _inches(paragraph.space_before) + _inches(paragraph.space_after)
     return total
 
 
@@ -132,24 +200,23 @@ def occupied_bbox(sh, clamp_h=True):
         return 0.0, 0.0, 0.0, 0.0
     try:
         tf = sh.text_frame
-        max_w = 0.0
-        total_h = 0.0
-        for p in tf.paragraphs:
-            size = 14.0
-            text = ""
-            for r in p.runs:
-                if r.font.size is not None:
-                    size = r.font.size.pt
-                text += r.text
-            eff = sum(1.0 if ord(c) > 0x2E80 else 0.55 for c in text)
-            line_w = min(w, max(0.0, eff * size / 72.0))
-            max_w = max(max_w, line_w)
-            cpl = max(1.0, (w * 72.0) / size)
-            lines = max(1, math.ceil(eff / cpl))
-            ls = p.line_spacing if p.line_spacing else 1.15
-            mult = ls if isinstance(ls, float) else 1.15
-            total_h += lines * size * 1.22 * mult / 72.0
-        return x, y, min(w, max_w), min(h, total_h) if clamp_h else total_h
+        left, right = _inches(tf.margin_left), _inches(tf.margin_right)
+        top, bottom = _inches(tf.margin_top), _inches(tf.margin_bottom)
+        inner = max(0.01, w - left - right)
+        max_w = max((paragraph_width(p, line) for p in tf.paragraphs
+                     for line in p.text.replace("\v", "\n").split("\n")), default=0)
+        text_w = min(inner, max_w) if tf.word_wrap is not False else max_w
+        text_h = max(0, estimate_text_height(tf, w) - top - bottom)
+        # Respect centered/right-aligned labels and vertically anchored text.
+        alignments = {str(p.alignment).split(" (")[0] for p in tf.paragraphs}
+        if alignments == {"CENTER"}:
+            left += max(0, inner - text_w) / 2
+        elif alignments == {"RIGHT"}:
+            left += max(0, inner - text_w)
+        anchor = str(tf.vertical_anchor).split(" (")[0]
+        slack = max(0, h - top - bottom - text_h)
+        top += slack / 2 if anchor == "MIDDLE" else slack if anchor == "BOTTOM" else 0
+        return x + left, y + top, text_w, min(max(0, h - top), text_h) if clamp_h else text_h
     except Exception:
         return x, y, w, h
 
@@ -184,6 +251,19 @@ def oob_key(sh):
     return (getattr(sh, "name", "") or "", round(x, 1), round(y, 1), round(w, 1), round(h, 1))
 
 
+def overlap_key(a, b):
+    # Recognize the same decoration pattern after a template group is translated.
+    # Include actual text for text/text pairs: new text must never inherit an
+    # exemption for an old template collision.
+    ordered = sorted((a, b), key=lambda sh: (sh.name, bbox(sh)))
+    first, second = ordered
+    fa, fb = bbox(first), bbox(second)
+    pattern = tuple((sh.name, round(box[2], 1), round(box[3], 1))
+                    for sh, box in zip(ordered, (fa, fb)))
+    texts = tuple(sh.text_frame.text for sh in ordered) if all(has_text(sh) for sh in ordered) else ()
+    return ("overlap", pattern, round(round(fb[0] - fa[0], 4), 2), round(round(fb[1] - fa[1], 4), 2), texts)
+
+
 def is_out_of_bounds(sh, page_w, page_h):
     x, y, w, h = bbox(sh)
     if w <= 0 and h <= 0:
@@ -201,8 +281,8 @@ def collect_baseline(prs):
 
 
 def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h,
-                baseline=frozenset(), infos=None, seen=None):
-    shapes = list(slide.shapes)
+                baseline=frozenset(), infos=None, seen=None, check_formulas=True):
+    shapes = list(positioned_shapes(slide.shapes))
     visible = [sh for sh in shapes if has_visible_fill(sh) or has_text(sh)]
 
     def report(key, msg):
@@ -235,14 +315,14 @@ def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h,
             if small <= 0 or inter <= 0:
                 continue
             # containment: transparent text on a panel, or a small decoration strip
-            if _contains(oa, ob) and (not has_visible_fill(b) or
-                                      (ob[2] * ob[3]) / (oa[2] * oa[3]) < 0.18):
+            if (_contains(oa, ob) and (has_visible_fill(a) or not has_text(a))
+                    and (not has_visible_fill(b) or (ob[2] * ob[3]) / (oa[2] * oa[3]) < 0.18)):
                 continue
-            if _contains(ob, oa) and (not has_visible_fill(a) or
-                                      (oa[2] * oa[3]) / (ob[2] * ob[3]) < 0.18):
+            if (_contains(ob, oa) and (has_visible_fill(b) or not has_text(b))
+                    and (not has_visible_fill(a) or (oa[2] * oa[3]) / (ob[2] * ob[3]) < 0.18)):
                 continue
             if inter / small > 0.28:
-                report(("overlap",) + tuple(sorted((oob_key(a), oob_key(b)))),
+                report(overlap_key(a, b),
                        f"第 {sidx} 页: 形状重叠 ({_n(inter)} in²) 于 "
                        f"({_n(oa[0])}, {_n(oa[1])}) 与 ({_n(ob[0])}, {_n(ob[1])})")
 
@@ -270,7 +350,7 @@ def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h,
             issues.append(f"第 {sidx} 页: 原生图表没有数据系列")
         else:
             for idx, item in enumerate(series, start=1):
-                if not str(getattr(item, "name", "") or "").strip():
+                if not chart_series_name(item):
                     issues.append(f"第 {sidx} 页: 原生图表第 {idx} 个系列缺少名称")
                 values = tuple(getattr(item, "values", ()) or ())
                 if not values:
@@ -317,29 +397,38 @@ def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h,
                 issues.append(f"第 {sidx} 页: 图表系列数为 {actual_count}，与 deck 的 {expected_count} 不一致")
 
     # 2c) inline formulas that formula.py has not converted yet
-    for frag in find_unconverted_inline(slide):
+    for frag in find_unconverted_inline(slide) if check_formulas else ():
         issues.append(f"第 {sidx} 页: 公式未转换，请先跑 formula.py（残留「{frag}」）")
 
-    # 3) text overflow estimate (Hard beyond 25%+0.15in, Soft otherwise)
+    # 3) Text inside groups is checked in slide coordinates. Overflow is never
+    # baseline-exempt: changing only the text can break an unchanged template box.
     for sh in shapes:
+        if not sh.has_text_frame or is_formula(sh) or is_deco(sh):
+            continue
+        tf = sh.text_frame
+        if not tf.text.strip():
+            continue
+        x, y, w, h = bbox(sh)
+        if w <= 0 or h <= 0:
+            issues.append(f"第 {sidx} 页: 文字容器零尺寸「{tf.text[:16]}」")
+            continue
         try:
-            if not sh.has_text_frame or is_formula(sh) or is_deco(sh):
-                continue
-            tf = sh.text_frame
-            if not tf.text.strip():
-                continue
-            x, y, w, h = bbox(sh)
-            if w <= 0 or not tf.word_wrap:
-                continue
             need = estimate_text_height(tf, w)
-            if need > h * 1.25 + 0.15:
+            inner_width = max(0.01, w - _inches(tf.margin_left) - _inches(tf.margin_right))
+            if tf.word_wrap is False:
+                widest = max((paragraph_width(p, line) for p in tf.paragraphs
+                              for line in p.text.replace("\v", "\n").split("\n")), default=0)
+                if widest > inner_width + 0.04:
+                    issues.append(f"第 {sidx} 页: 不换行文字横向溢出「{tf.text[:16]}」"
+                                  f"文字宽 {_n(widest)} in > 可用宽 {_n(inner_width)} in")
+            if need > h + max(0.04, h * 0.10):
                 issues.append(f"第 {sidx} 页: 文本框溢出「{tf.text[:16]}…」"
-                              f"估算 {_n(need)} in > 框高 {_n(h)} in")
-            elif need > h:
+                              f"估算 {_n(need)} in > 框高 {_n(h)} in（{sh.path}）")
+            elif need > h + 0.01:
                 warnings.append(f"第 {sidx} 页: 文本框接近溢出「{tf.text[:16]}…」"
                                 f"估算 {_n(need)} in / 框高 {_n(h)} in")
-        except Exception:
-            continue
+        except Exception as exc:
+            issues.append(f"第 {sidx} 页: 无法检查文字容器 {sh.path}: {exc}")
 
     # 4) empty shapes
     for sh in visible:
@@ -428,7 +517,13 @@ def main() -> int:
         sys.stderr.write(f"✗ 页数不一致: deck {len(deck_slides)} 页 vs pptx {len(prs.slides)} 页\n")
         return 1
 
-    issues, warnings, infos = [], [], []
+    from pptx_package import package_problems
+    package_issues = package_problems(out_path)
+    # Extended-property counts are advisory metadata, not a broken slide or
+    # relationship. Some producers leave them stale even in readable files.
+    warnings = [problem for problem in package_issues if problem.startswith("docProps/app.xml:")]
+    issues = [problem for problem in package_issues if problem not in warnings]
+    infos = []
     signatures = []
     page_w, page_h = _inches(prs.slide_width), _inches(prs.slide_height)
     for i, slide in enumerate(prs.slides, start=1):

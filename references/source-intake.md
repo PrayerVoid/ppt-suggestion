@@ -55,7 +55,7 @@ page.get_pixmap(dpi=200, clip=pymupdf.Rect(70, 90, 540, 360)).save("fig4.png")  
 
 ## 3. 模板分析（有模板时必做）
 
-用 `scripts/analyze_template.py <模板.pptx> -o 模板摘要.md` 自动提取，并**人工补全以下内容**。完全遵循模板时，后续用 officecli 编辑模板副本（见 `template-inherit.md`），所以模板里哪些原页可复用、各页有哪些占位符要在这里理清：
+用 `scripts/analyze_template.py <模板.pptx> -o 模板摘要.md` 自动提取，并**人工补全以下内容**。完全遵循模板和半自主时都要做模板 inventory：前者用 OfficeCLI 编辑模板副本（见 `template-inherit.md`），后者还要记录内容页母页候选和可复制的顶层组合（见 `template-semi-autonomous.md`），所以模板里哪些原页可复用、各页有哪些内容 key 要在这里理清：
 
 - [ ] 页面比例及尺寸（自动）
 - [ ] 母版和版式结构：有哪些可用版式、各自用途（自动提取名称与占位符）
@@ -66,6 +66,19 @@ page.get_pixmap(dpi=200, clip=pymupdf.Rect(70, 90, 540, 360)).save("fig4.png")  
 - [ ] 各类型页面的版式规律：标题页/目录页/章节页/正文页/图文页/表格页/总结页分别长什么样
 
 结论写入 `模板摘要.md`：**新 PPT 优先复用模板已有版式，不因内容不同就重新设计整套视觉系统。**
+
+### 3.1 模板动画 inventory（阶段一必做）
+
+无论用户是否启用可选动效，只要输入包含模板，就在阶段一对同一份只读 `power_pptx Presentation` 运行 `scripts/animation_inventory.py` / `inventory(prs)`。必须分别检查并记录：
+
+- `slideMasters`、`slideLayouts`、实际 `slides` 三层；每页的 source part、master/layout 关系；母版或版式时序的继承关系。
+- 每个部件的 `p:timing`、`p:bldLst`，包括 `mc:AlternateContent` 的 Choice/Fallback 子树；按本部件 `cNvPr` ID 域解析 shape target，记录可解析的形状名/key、悬空 ID 与歧义 ID。
+- 触发事件（如 `onClick`）、段落/字符范围、`mainSeq`/`interactiveSeq`，以及 motion、media、command 和无法解释的高级特性。
+- 转场单独记录类型、时长、自动翻页、Morph 和声音标记，不把转场当作对象时序。
+
+这是静态 XML 清单，不代表实际播放已验证。阶段一只登记风险和语义指纹输入，不在发现悬空目标时自动清理整页。悬空目标、未知高级时序、共享层继承、段落构建和 Morph 风险必须进入前置动效计划；由 `auto`、`preserve` 或 `strip` 决定是否允许后续编辑。
+
+若使用模板母页或模板填充，manifest/map 顶层可写 `animation_policy`，每个输出页可写同名覆盖，取值为 `auto`、`preserve`、`strip`。CLI 的 `--animation-policy` 覆盖全局默认，但逐页覆盖仍优先。需要先审阅计划时使用 `--animation-plan-only`；它只输出编辑前计划，不调用 OfficeCLI。
 
 ## 4. 充分性检查（信息缺口门）
 
@@ -86,7 +99,7 @@ page.get_pixmap(dpi=200, clip=pymupdf.Rect(70, 90, 540, 360)).save("fig4.png")  
 - 领域/场景/听众：...
 - 资料来源：...（文件名，如有）
 - 模板摘要：有（见 模板摘要.md）/ 无
-- 用户选择（阶段二）：完全遵循模板 是/否；模式 完整/Quick/fast-lite；允许复用资料图片 是/否；统计图表 默认开启（仅真实数据关系）；拓展 动效/几何装饰角饰/特殊排版/无；几何底纹 明确允许/不允许
+- 用户选择（阶段二）：模板风格模式 完全遵循/半自主/完全自主白底极简/完全自主用户指定；模式 完整/Quick/fast-lite；允许复用资料图片 是/否；统计图表 默认开启（仅真实数据关系）；拓展 动效/几何装饰角饰/特殊排版/无；模板 `animation_policy` 默认 `auto`/`preserve`/`strip`，逐页覆盖；几何底纹 明确允许/不允许
 
 ## 事实清单
 （按主题列出：每个事实一句话，带来源位置，数字/单位/术语逐字摘录）

@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | 完整 | 完整材料摘要、`STORY.md`、设计锁定、多个候选与确认 | 完整模板 inventory、逐页映射与确认 | 全部结构、版式、渲染和视觉检查 |
 | Quick | 普通六阶段流程，减少候选数量 | 普通 inventory 后按页填充 | 全部 Hard 检查，允许少量 Soft |
-| fast-lite | 一次事实清单、一个 seed、一个候选、直接生成 `deck.json` | 一次紧凑 inventory、自动映射、批量填充并复用 inventory | 结构 Hard 检查、PPTX 可重新打开、真实渲染和明显溢出 |
+| fast-lite | 一次事实清单、一个 seed、一个候选、直接生成 `deck.json` | 完全遵循：紧凑 inventory 后批量填充；半自主：紧凑 inventory、选择母页并批量复制组；完全自主：按无模板路径采样 | 结构 Hard 检查、PPTX 可重新打开、真实渲染和明显溢出 |
 
 ## 无模板 fast-lite
 
@@ -43,20 +43,22 @@
 
 ## 有模板 fast-lite
 
-1. 对原始 PPTX 只做一次紧凑 inventory，记录页数、页面尺寸、版式、占位符、标题、页脚、可复用图表和图片位置。
-2. 根据标题和 block 类型自动建立 `map.json`，批量填充模板副本；复用同一次 inventory，不重复分析每页。
-3. 模板页数、占位符类型、映射覆盖率和输出页数必须通过检查；模板已有图表只保留并填入已有可编辑字段，当前 `template_fill.py` 不改写图表系列、分类和数值。
-4. 运行：
+1. 对原始 PPTX 只做一次紧凑 inventory，记录页数、页面尺寸、版式、占位符、标题、页脚、可复用图表和图片位置；无论是否启用动效，另用 `animation_inventory.py` 扫描母版、版式、实际页及 MC 分支，并把对象动画与转场分开记录；半自主额外记录内容页母页候选、可复制顶层组合和要清除的内容 key。
+2. 在 manifest/map 顶层设置 `animation_policy`（`auto`/`preserve`/`strip`），逐页可覆盖。CLI `--animation-policy` 只覆盖全局默认，逐页设置优先。先运行 `template_mother.py` 或 `template_fill.py --animation-plan-only` 审阅计划；该模式只输出 stdout，不调用 OfficeCLI。
+3. 完全遵循根据标题和 block 类型建立 `map.json`，批量填充模板副本；半自主先用 `template_mother.py` 做一次母页清空检查，再用 `clone_groups` 扩展内容；复用同一次 inventory，不重复分析每页。默认 `auto` 对受影响页整树取消对象时序，不做一对多动画映射；普通转场因内容编辑改为手动翻页并取消声音，Morph、段落 build 文本变化和高级/未知时序按风险取消或前置阻断。继承 timing 的页编辑在 `auto`/`preserve` 前置拒绝；`preserve` 无法支持时报错；共享层保留/清除冲突拒绝。
+4. 模板页数、占位符类型、映射覆盖率和输出页数必须通过检查。模板已有图表可以保留；图片/图表位替换和新增 native chart 由 OfficeCLI batch 完成，失败整批回滚，输出还要确认 chart 对象实际存在。系列结构大幅变化时明确回退 SVG/PNG，不静默丢图表。
+5. 运行：
 
    ```text
    <py> scripts/validate_pptx.py <输出.pptx> --deck deck.json --baseline <模板.pptx>
+   <py> scripts/template_animation.py <输出.pptx> --plan <输出.pptx>.animation-plan.json
    ```
 
-   再做一次真实预览。模板自身的越界按 baseline 规则降级，新增的 Hard 问题仍必须修复。
+   再做一次真实预览。模板自身的越界按 baseline 规则降级，新增的 Hard 问题仍必须修复。动画计划核对目标、时序、转场及版式/母版关系的归一化语义指纹；它不验证实际播放。新增动效必须获明确授权并重建计划，不能沿用旧计划声称保留。
 
 ## 自动回退
 
-遇到复杂研究、资料缺口、多个模板融合、复杂图片裁切、公式密集页、复杂动画、需要重写模板图表数据或用户要求精细视觉控制时，停止 fast-lite，回退到普通 Quick 或完整模式，并在材料摘要中记录原因。
+遇到复杂研究、资料缺口、多个模板融合、复杂图片裁切、公式密集页、无法由前置动画计划安全处理的复杂动画、需要重写模板图表数据或用户要求精细视觉控制时，停止 fast-lite，回退到普通 Quick 或完整模式，并在材料摘要中记录原因。动效新建或重建另走授权后的计划，不把旧指纹当作保留证明。
 
 ## fast-lite 仍必须阻断的错误
 

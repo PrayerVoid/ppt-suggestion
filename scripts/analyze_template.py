@@ -63,6 +63,7 @@ def read_theme_colors(prs) -> dict:
 
 
 def analyze(prs) -> dict:
+    from animation_inventory import inventory
     w_in = Emu(prs.slide_width).inches if prs.slide_width else None
     h_in = Emu(prs.slide_height).inches if prs.slide_height else None
     layouts = []
@@ -93,6 +94,7 @@ def analyze(prs) -> dict:
         "theme_colors": read_theme_colors(prs),
         "chrome": sorted(chrome),
         "slide_count": len(prs.slides._sldIdLst),
+        "animation": inventory(prs),
     }
 
 
@@ -101,6 +103,8 @@ def _shape_kind(sh) -> str:
         return "picture"
     if getattr(sh, "has_table", False) and sh.has_table:
         return "table"
+    if getattr(sh, "has_chart", False) and sh.has_chart:
+        return "chart"
     if sh.has_text_frame:
         return "text"
     return "other"
@@ -145,6 +149,8 @@ def slides_inventory(prs) -> list:
 
     组合子形状的位置是组合内坐标，不是页面坐标。
     """
+    from animation_inventory import inventory
+    animations = inventory(prs)["slides"]
     out = []
     for i, s in enumerate(prs.slides, 1):
         shapes = []
@@ -163,7 +169,8 @@ def slides_inventory(prs) -> list:
                 "left": sh.left, "top": sh.top, "width": sh.width, "height": sh.height,
                 "text": text,
             })
-        out.append({"slide": i, "layout": s.slide_layout.name or "", "shapes": shapes})
+        out.append({"slide": i, "layout": s.slide_layout.name or "", "shapes": shapes,
+                    "animation": animations[i - 1]})
     return out
 
 
@@ -192,6 +199,20 @@ def to_markdown(info: dict) -> str:
         names = [f"{p['idx']}:{p['type']}" for p in lo["placeholders"]]
         lines.append(f"- **{lo['name'] or '(未命名)'}**" + (f" — {', '.join(names)}" if names else " — (无占位符)"))
     lines.append("")
+    animation = info["animation"]
+    lines.extend(["## 动画与转场预检", "",
+                  "扫描实际页、版式和母版的全部 MC 分支；以下为 XML 清单，未验证放映播放。", "",
+                  "| 输出源页 | 对象时序 | 构建列表 | 继承时序 | 转场 | 自动翻页 | 声音/Morph |",
+                  "| --- | --- | --- | --- | --- | --- | --- |"])
+    for page in animation["slides"]:
+        timing, transition = page["timing"], page["transition"]
+        advance = f"{transition['advance_after_ms']}ms" if transition["automatic"] else "否"
+        lines.append(f"| {page['slide']} | {'有' if timing['present'] else '无'} | "
+                     f"{'有' if timing['has_builds'] else '无'} | "
+                     f"{'有' if page['has_inherited_timing'] else '无'} | {transition['type']} | "
+                     f"{advance} | {transition['has_sound']}/{transition['is_morph']} |")
+    lines.extend(["", "母版/版式的目标 ID 只在所属部件内解析，不能借用页面对象。详情见同名 .template.json。",
+                  "生成前必须按编辑动作形成逐页动画计划，见 references/template-animation.md。", ""])
     lines.append("## 待人工核对")
     lines.append("- [ ] 页眉、页脚、页码实际位置与样式")
     lines.append("- [ ] 分隔线、色块及装饰元素在哪些页、放哪里")

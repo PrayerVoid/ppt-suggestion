@@ -2,7 +2,7 @@
 
 | 拓展 | 目录 | 做什么 | 启用条件 |
 |---|---|---|---|
-| 图表 | `charts/` | `chart` block：优先生成原生 `power_pptx` 图表，不支持或兼容性不稳定时用 SVG 兜底 | 默认开启；有真实数据时使用 |
+| 图表 | `charts/` | `chart` block：无模板优先生成原生 `power_pptx` 图表；完全遵循/半自主模板由 OfficeCLI 保留、替换或新增 native chart，不支持或兼容性不稳定时用 SVG 兜底 | 默认开启；有真实数据时使用 |
 | 动效 | `animation/` | 页间基础转场 + 内容页逐块入场，对成品 pptx 后处理 | 用户在询问阶段选了“动效” |
 | 几何装饰 | `geometry-deco/` | 对成品 pptx 按页类型增加一套可编辑几何母题；支持 3 个基础母题和参考资料中的完整 41 个模板 | 用户选了“几何装饰” |
 | 特殊排版 | `special-layout/` | 追加 `bignum`、`asym`、`quote`、`diagonal`、`radial`、`ring`、`marginalia`、`concentric`、`quadrant` block | 用户选了“特殊排版” |
