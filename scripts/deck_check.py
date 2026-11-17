@@ -30,6 +30,7 @@ BUILTIN_KINDS = {
     "agenda", "chart", "figure", "lead", "insight", "stats", "columns", "steps", "chips",
     "layers", "table", "split", "callouts", "cards", "rows", "compare",
     "pipeline", "hub", "timeline", "points", "formula",
+    "bignum", "asym", "quote", "marginalia", "quadrant",
 }
 NON_STRUCTURE_KINDS = {"lead", "insight", "chips"}
 MIN_KINDS = 5

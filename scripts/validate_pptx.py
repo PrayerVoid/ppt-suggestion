@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mechanical validation for a rendered PPTX (ppt-suggestion phase 4).
+"""Mechanical validation for a rendered PPTX (ppt-suggestion phase 6).
 
 Checks per slide: shape overlap, out-of-bounds, estimated text overflow,
 empty shapes, image distortion / low resolution, unconverted inline `$...$`

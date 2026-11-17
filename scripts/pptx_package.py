@@ -172,8 +172,8 @@ def _serialize(root):
 def repair_package(path, *, repair_animations=True):
     """原子修复输出副本并复查；任何检查/写入失败都不替换原文件。
 
-    repair_animations=False 时只修页数元数据，动画错误会阻断，不再擅自取消动画。
-    默认兼容旧的显式修复调用，仅修改含悬空 spid 的页面及 app.xml。
+    repair_animations=False 时只修页数元数据，动画错误会阻断。
+    repair_animations=True（默认）时清除含悬空 spid 页面的 timing/bldLst，并更新 app.xml。
     没有修改时也执行检查；已通过且无需修复的文件不会重写。
     """
     path = Path(path).resolve()

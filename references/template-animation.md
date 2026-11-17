@@ -1,6 +1,6 @@
 # 模板动画处置
 
-模板动画必须在模板分析阶段确认。静态 XML 清单可以确认部件、目标 ID、构建范围、触发器、主序列/交互序列、动作路径、媒体、命令、转场、自动翻页、声音和 Morph；它不能证明 PowerPoint 放映时的节奏和效果。`analyze_template.py` 会把实际页、slideLayout 和 slideMaster 分开扫描，并检查所有 `mc:AlternateContent` 分支。页面对象的 `spid` 只在本页面解析，版式和母版的 ID 只在各自部件解析。
+模板动画必须在模板分析阶段确认。静态 XML 清单可以确认部件、目标 ID、构建范围、触发器、主序列/交互序列、动作路径、媒体、命令、转场、自动翻页、声音和 Morph；它不能证明 PowerPoint 放映时的节奏和效果。`analyze_template.py` 会把实际页、slideLayout 和 slideMaster 分开扫描，并检查所有 `mc:AlternateContent` 分支。页面对象的 `spid` 只在本页面解析，版式和母版的 ID 只在各自部件解析。清单应保留 source part、master/layout 关系、可解析的形状名/key、悬空或歧义 ID、高级特性与风险；不在分析阶段自动清理。也可用 `scripts/animation_inventory.py 模板.pptx` 单独输出 JSON，或复用同一只读 Presentation 的 `inventory(prs)`。
 
 ```text
 <py> scripts/analyze_template.py 模板.pptx -o 模板摘要.md
@@ -8,12 +8,12 @@
     --map map.json --output 输出.pptx --animation-plan-only
 ```
 
-`map.json` 和 `mothers.json` 可以写顶层 `animation_policy`，单页可以写 `animation_policy` 覆盖它；命令行 `--animation-policy auto|preserve|strip` 覆盖顶层默认值。`--animation-plan-only` 只做编辑前计划，不启动 OfficeCLI，不写输出 PPTX。
+`map.json` 和 `mothers.json` 可以写顶层 `animation_policy`，单页可以写 `animation_policy` 覆盖它；命令行 `--animation-policy auto|preserve|strip` 覆盖顶层默认值，逐页设置仍优先；未指定时默认 `auto`。`--animation-plan-only` 只做编辑前计划，不启动 OfficeCLI，不写输出 PPTX。
 
 | 策略 | 编辑前行为 | 输出行为 |
 | --- | --- | --- |
 | `preserve` | 只接受能证明目标、时序、构建范围和关系仍可对应的编辑；删除动画目标、改变段落构建、复制对象、复杂图表/媒体/动作路径、Morph 关系变化和共享继承动画都会提前报错 | 不改变对象动画和转场；最终做归一化语义指纹核对 |
-| `auto` | 根据编辑风险逐页决定 | 无法定义一对一映射时，清除受影响页的对象时序和构建列表；不把旧动画盲目复制给克隆组。普通转场可保留，但改为手动翻页并取消自动翻页及转场声音；Morph 关系改变时清除该页转场 |
+| `auto` | 根据编辑风险逐页决定 | 无法定义一对一映射时，清除受影响页的对象时序和构建列表；不把模板动画盲目复制给克隆组。普通转场可保留，但改为手动翻页并取消自动翻页及转场声音；Morph 关系改变时清除该页转场 |
 | `strip` | 记录显式静态化原因；共享母版/版式部件必须对所有引用页统一策略 | 清除对象时序、构建列表、转场及其自动翻页和声音；共享部件按统一策略清除 |
 
 这里的“受影响页”指最终复制出的页，而不是模板原页。文字替换只在整形状动画、没有段落或字符范围构建且目标仍能定位时保留对象时序；文本段落数量、`pRg`/`charRg` 范围或图表构建发生变化时，`auto` 会静态化该页。删除或替换动画目标、删除图片并放入图表、复制组合和新增形状都会改变对象集合；当前工作流不猜测一对多的点击顺序，`auto` 会静态化，`preserve` 会在调用 OfficeCLI 前失败。未受影响页的合法动画可以保留。
@@ -29,6 +29,6 @@
 
 核对包含页数、版式/母版关联、对象目标、时序节点依赖、段落范围、转场和关系引用的归一化指纹；对象 ID 重编本身不会误报，目标换成另一形状会失败。失败时保留既有成功输出，回到 map、母页或策略重做。`template_animation.py` 的通过信息只表示 XML 计划一致，不表示已经放映。
 
-如果用户启用 `extensions/animation` 新增入场动效，必须在公式、图表和所有形状增删之后运行。它不是模板动画保留的证明：新增动效应生成自己的目标/点击计划并自检，不能拿模板的旧指纹比较。`--com-check` 或 PowerPoint 放映检查另行记录。
+如果用户启用 `extensions/animation` 新增入场动效，必须在公式、图表和所有形状增删之后运行。它不是模板动画保留的证明：新增动效应生成自己的目标/点击计划并自检，不能拿新增效果与模板编辑前指纹比较来声称保留。`--com-check` 或 PowerPoint 放映检查另行记录；具体选项与范围见动效 EXT。
 
-最终报告分开记录四项：包结构与引用、静态布局渲染、目标应用能否打开、实际放映播放。HTML/Pillow/原生 PDF 都不能替代动画播放检查；没有放映验证时必须明确写 `playback_verified=false`。
+最终按 [validation.md](validation.md) 分别记录结构、静态渲染、目标应用打开与实际放映，记录格式见 [playback-report.md](playback-report.md)。没有放映验证时明确写 `playback_verified=false`，不能用 XML、HTML/Pillow 或原生 PDF 替代。

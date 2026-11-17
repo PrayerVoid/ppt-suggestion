@@ -10,144 +10,101 @@ metadata:
 ---
 # PPT Suggestion Skill
 
-## 任务
+## 任务与环境
 
-用户提供资料与可选模板，你产出像专业人员手工制作的、无明显 AI 痕迹的可编辑 `.pptx`。
-先做对内容，再谈美观；不虚构、不夸大，术语与数字与原始资料完全一致。
+用户提供资料与可选模板，产出像专业人员手工制作的可编辑 `.pptx`。术语、名称、单位、数字与资料一致，不虚构数据、结论或案例；“显著、领先、国际先进”等判断必须有资料依据。
 
-## 环境（首次使用）
+首次使用按 [README 安装说明](README.md#安装) 创建项目 `.venv` 并安装依赖及 OfficeCLI。下文 `<py>` 指 `.venv/bin/python`（macOS/Linux）或 `.venv/Scripts/python`（Windows）；`power-pptx` 的导入名为 `power_pptx`。可选依赖与降级边界也以 README 为准。
 
+## 规则导航
+
+| 职责 | 规则入口 |
+|---|---|
+| 资料读取、模板分析、事实与缺口 | [source-intake.md](references/source-intake.md) |
+| 信息层级、叙事与 STORY | [story.md](references/story.md) |
+| 全部文案的语言自查 | [humanize.md](references/humanize.md) |
+| 视觉、密度、节奏与采样职责 | [design.md](references/design.md) |
+| 核心/特殊版式及图片构图选型 | [layout-types.md](references/layout-types.md) |
+| deck 字段、容量与渲染前机械检查 | [deck-schema.md](references/deck-schema.md) |
+| 模板继承与 map | [template-inherit.md](references/template-inherit.md) |
+| 半自主母页、manifest 与组合扩展 | [template-semi-autonomous.md](references/template-semi-autonomous.md) |
+| 模板动画 inventory、计划与核对 | [template-animation.md](references/template-animation.md) |
+| 快速路径差异 | [fast-mode.md](references/fast-mode.md) |
+| 图表与可选扩展 | [extensions/README.md](extensions/README.md) |
+| 结果校验、修复与证据记录 | [validation.md](references/validation.md)、[playback-report.md](references/playback-report.md) |
+
+核心版式无需启用特殊排版。图表能力默认可用，仅在资料有真实数据关系时使用；使用图表时读 charts 的 EXT。动效、几何装饰、特殊排版默认关闭，启用后才读相应 EXT；几何底纹须单独明确允许。
+
+## 六阶段工作流
+
+严格串行：**阅读材料 → 询问用户 → 设置基本版式 → 生成内容与微调版式 → 排版渲染 → 结果校验**。不跨阶段提前准备产物。已有用户指令和选择持续有效，只询问缺失信息；完整与 Quick 在确认门等明确确认，fast-lite 的差异见 fast-mode。
+
+### 一、阅读材料
+
+按 source-intake 读取全部资料，核对转换后的术语、数字、单位与公式。HTML/URL 用 `scripts/source_to_md.py`。
+
+有模板时运行 `<py> scripts/analyze_template.py 模板.pptx -o 模板摘要.md --slides-json`，人工补全模板分析。无论是否启用动效都检查三层动画 inventory；策略与风险处理按 template-animation，静态 XML 清单不能当作播放证明。
+
+⛔ **信息缺口门**：列出缺失项、影响与需要补充的信息，请用户补齐或确认留白；不臆造。整理 `材料摘要.md` 与有模板时的 `模板摘要.md`。
+
+### 二、询问用户
+
+一次问完，只问缺的，能推断的不问：
+
+1. 场合、受众、页数，合计最多 3 个问题。
+2. 有模板时确定风格模式：**完全遵循模板**（复制原页、替换已有对象）、**半自主**（保留模板视觉骨架，用母页和组合原子扩展内容）、**完全自主白底极简**、**完全自主用户指定风格**。后两种不继承模板页面；选择写入材料摘要。
+3. 是否快速模式：说明完整模式耗时和 token 更多、可控性更强；快速模式减少候选、规划和确认，适合初稿。用户说“直接做”“快速”即采用 fast-lite；复杂任务按 fast-mode 回退。
+4. 是否允许复用资料图片。
+5. 是否启用动效、几何装饰、特殊排版，说明额外成本；几何底纹另行明确允许。
+
+快速模式默认：有模板则完全遵循，允许复用资料图片，图表能力可用，其余扩展和底纹关闭。资料缺口仍按 fast-mode 处理。选择记入 `材料摘要.md`。
+
+### 三、设置基本版式
+
+完全遵循与半自主继承模板主题、字体和母页，不运行采样器。两个完全自主模式按 design 采样；用户指定风格写入设计约束并覆盖候选中的相应参数。
+
+```text
+<py> scripts/sample_style.py --seed <随机整数> --count 3 --scene <学术|工程|商务|政务|教育> --pages <页数或类型序列> [--force-color HEX]
 ```
-python -m venv .venv
-.venv/Scripts/python -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
-.venv/Scripts/python -m officecli install
+
+比较候选后按内容取舍；fast-lite 使用 `--count 1`。⛔ **版式确认门**：告知选定配色与风格，等用户确认（fast-lite 跳过）。
+
+完全自主模式复制 `scripts/render_pptx.py`、`scripts/text_measure.py`、`scripts/deck_check.py` 到结果目录的 `渲染器/`。用同一组采样参数与 `--emit-constants <候选ID>` 输出常量块，写入副本顶部；ID 从 0 开始。后续项目定制改副本。保存 seed、候选 ID、参数、完整 palette/base 与用户覆盖项到 `style.json`。
+
+### 四、生成内容与微调版式
+
+完整或 Quick 按 story 写 `STORY.md`（意图 → 骨架 → 逐页）；fast-lite 保留紧凑事实清单，直接写 deck。按 layout-types 选型、design 检查视觉与密度、schema 写 `deck.json`；采样候选仅作起点。
+
+**必经文案检查**：全部文本按 humanize 全量规则人工自查，包含标题、body、note、insight、表格与图表文字；不以结构脚本替代。⛔ **大纲确认门**：列出每页一行结论句并等用户确认（fast-lite 跳过）。
+
+渲染前必须通过校验，失败按 schema 报错解释修复：
+
+```text
+<py> 渲染器/deck_check.py deck.json
+# 完全遵循或半自主使用：
+<py> scripts/deck_check.py deck.json --template-mode
 ```
 
-`requirements.txt` 汇总核心与可选依赖；只跑核心渲染和模板流程可安装 `requirements-core.txt`，需要 PDF、图片预检或图表 SVG/PNG 兜底时再安装 `requirements-optional.txt`。可选包缺失时按 README 的降级规则执行，不把缺少可选能力误报为核心流程失败。
+特殊排版接入按其 EXT；`--extra-kinds` 只放行名称，不安装渲染函数。模板模式跳过的检查范围见 schema；快速模式不额外放宽脚本门槛。
 
-macOS/Linux 把 `.venv/Scripts/python` 换成 `.venv/bin/python`。下文 `<py>` 都指这个 venv 的 python（导入名是 `power_pptx`）。
-officecli 二进制下载失败时的处理见 `README.md` 的"安装"一节。脚本通过 `scripts/ocli.py` 自动定位二进制。
+### 五、排版渲染
 
-## 文件导航
+- **完全自主**：`<py> 渲染器/render_pptx.py --input deck.json --output "<中文名>.pptx"`。
+- **完全遵循**：按 template-inherit 写 map，再运行 `<py> scripts/template_fill.py --template 模板.pptx --deck deck.json --map map.json --output "<中文名>.pptx"`。
+- **半自主**：按 template-semi-autonomous 写 manifest，用 `template_mother.py --template 模板.pptx --manifest mothers.json --output mothers.pptx` 检查母页清空结果，再由原模板和带 `clone_groups` 的 map 运行 template_fill。母页不是最终生成输入。
 
+模板编辑前审阅动画计划；容量或源图清晰度不足就换页、拆页或换图，不缩字号硬塞。失败不覆盖已有成功输出。模板图表由 OfficeCLI 同位替换，完全自主图表由渲染器生成；支持范围与回退操作按 charts EXT。
 
-| 阶段                  | 必读                                                                           | 必跑 / 产物                                                                                         |
-| ----------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| ① 阅读材料           | `references/source-intake.md` + `references/template-animation.md`             | `source_to_md.py`（HTML/URL）、`analyze_template.py`（有模板时，含三层动画 inventory）；产物 `材料摘要.md`、`模板摘要.md` |
-| ② 询问用户           | 本文件                                                                         | 无脚本；结果记入 `材料摘要.md`                                                                      |
-| ③ 设置基本版式       | `references/design.md`                                                         | 完全自主模式跑 `sample_style.py`；可用 `style_showcase.py` 检查候选；模板模式继承主题与母页             |
-| ④ 生成内容与微调版式 | `references/story.md` + `references/humanize.md` + `references/deck-schema.md` | 渲染器副本里的 `deck_check.py`；产物 `STORY.md`、`deck.json`                                        |
-| ⑤ 排版渲染           | 完全遵循读 `references/template-inherit.md`；半自主再读 `references/template-semi-autonomous.md`；模板动画读 `references/template-animation.md`；启用拓展读 `extensions/<名>/EXT.md` | `template_mother.py`、渲染器副本 / `template_fill.py`、`formula.py`、拓展脚本；产物 `<中文名>.pptx` + `.animation-plan.json` |
-| ⑥ 结果校验           | `references/validation.md`                                                     | `validate_pptx.py`、`render_preview.py` 出图自查；产物 `校验报告.md`                                |
+deck 含 `formula` 或 `$...$` 时，渲染后运行 `<py> scripts/formula.py "<中文名>.pptx"`。可选后处理按“公式 → 几何装饰 → 动效”顺序执行，输出新文件；特殊排版属于渲染器接入。所有形状编辑结束后按 template-animation 复核计划。渲染、校验均为前台任务。
 
-每个 references 文档本身就是完整的设计规范，按要求执行即可。统计图表能力默认可用，但只有资料中存在真实数据关系时才生成图表；无真实数据时不凭空添加。动效、几何装饰、特殊排版等可选拓展默认关闭，说明在 `extensions/README.md`；用户没选就不用读。
+### 六、结果校验与交付
 
-## 六阶段工作流（严格串行）
+按 validation 完成机械校验、逐页预览与目视复核；模板使用原模板作 baseline。**Hard 必须为零**，Soft 在 `--strict` 时同样阻断。脚本通过不能覆盖目视发现的溢出、遮挡或缺失。
 
-总流水线：**阅读材料 → 询问用户 → 设置基本版式 → 生成内容与微调版式 → 排版渲染 → 结果校验**。
-每个「⛔ 门禁」处停下，向用户确认或列出问题，确认后才继续。不跨阶段提前准备产物。
+小修限位置、字号（角色锚点 ±2pt）、间距、对齐与底衬；仍装不下就退回内容规划或模板选页。每次修复重跑“deck_check → 渲染 → 公式/已启用后处理 → validate_pptx → 预览”，模板动画按计划复核。
 
-### 阶段一：阅读材料（按 references/source-intake.md）
+结构检查、静态渲染、目标应用打开、实际放映分别记录。`template_animation.py`、`officecli validate` 或预览通过不证明实际播放和 Office 打开无修复提示；未实测须明确说明。交付 `.pptx` 的**绝对路径**，简短列出资料缺口、假设、回退与未验证项，预览图不交付。
 
-1. 读取全部资料：Markdown 直接读；Word/PDF/Excel 用 Read 工具；HTML/URL 用 `source_to_md.py` 转 Markdown。
-   转换失败则如实列缺口问用户。
-2. 有模板时跑 `analyze_template.py <模板.pptx> -o 模板摘要.md` 并人工核对模板分析清单。清单必须包含 slide、slideLayout、slideMaster 三层的对象时序、构建范围、触发器、段落范围、高级特性和转场；看到 `playback_verified=false` 时不能把 XML 清单当成放映验证。
-3. 判断领域、汇报场景、目标听众，按领域通行惯例组织内容。
-4. ⛔ **信息缺口门**：术语、名称、单位、数字必须与资料完全一致；资料不足的部分列缺口问用户补齐
-   或确认留白；**绝不臆造数据、结论、案例**。
-5. 产物：`材料摘要.md`（事实清单、术语与数据摘录、模板摘要、缺口清单）。
+## 产物位置
 
-### 阶段二：询问用户
-
-⛔ 一次问完，只问缺的，能推断的不问：
-
-1. **场合、受众、页数**：最多 3 个问题；用户已说明的不再问。
-2. **模板风格模式**（给了模板才问，四选一）：
-   - **完全遵循模板**：复制最接近的模板原页，只替换已有文字、图片、表格；必要时可把顶层图片位替换成同尺寸图片或 OfficeCLI 原生图表。
-   - **半自主**：从模板正文页生成内容页母页，清除明确的原始内容，保留母版、背景、装饰、字体、主题色和页眉页脚；再用母页的组合设计原子复制扩展内容，并按模板风格新增图表或少量文本框。
-   - **完全自主（默认白底极简）**：不继承模板页面，使用 `sample_style.py` 和渲染器生成白底极简 PPT。
-   - **完全自主（其它风格，用户指定）**：不继承模板页面，但按用户指定的色彩、字体、密度或参考风格生成，并记录设计约束。
-3. **是否快速模式**：先提示：完整模式会消耗更多 token 和时间，但可控性更强；快速模式会减少规划、候选和确认，适合先出初稿，交付后可能需要调整。选择是 → 按 `references/fast-mode.md` 走 fast-lite 路径，并跳过本阶段之后的提问与确认；选择否 → 走完整或普通 Quick 流程。
-4. **是否允许复用参考资料里的图片**：否 → `figure` 不使用资料原图。
-5. **是否启用可选拓展**：统计图表默认开启（仅有真实数据关系时生成）；动效、几何装饰、特殊排版默认关闭。说明：拓展会增加额外 token、时间和出错概率；几何装饰中的“底纹”还需单独明确允许。
-
-用户说"直接做""快速"即视为快速模式。快速模式的默认值：有模板则遵循模板；允许复用图片；统计图表能力保持开启；动效、几何装饰、特殊排版和几何底纹均关闭。
-把选择记入 `材料摘要.md`。
-
-### 阶段三：设置基本版式
-
-完全遵循模板和半自主模式跳过本阶段的配色采样，直接从模板主题色、字体与版式母页继承。两个完全自主模式才运行 `sample_style.py`；其中默认白底极简使用采样器默认规则，用户指定风格使用用户给出的颜色、字体和版式边界覆盖采样结果。快速模式先读 `references/fast-mode.md`：无模板只生成一个 seed 和一个候选；有模板只做一次紧凑 inventory 并复用结果。
-
-1. 跑采样器，得到若干套配色 / 基本版式常量 / 逐页版式候选：
-   ```
-   <py> scripts/sample_style.py --seed <随机整数> --count 3 --scene <学术|工程|商务|政务|教育> --pages <页数或类型序列> [--force-color HEX]
-   ```
-
-   采样只提供随机性，**最终取舍归你**：觉得不合适可以换 seed、改色或手调；用户指定了颜色就用 `--force-color` 强制采用。
-   普通流程取第 1 套至第 3 套比较；快速模式用 `--count 1`，直接取唯一候选并保留 seed 以便复现。
-2. ⛔ 把选定的配色（色值）与版式风格告诉用户，没反对再往下（快速模式不停）。
-3. 复制渲染器三件套到项目：`scripts/render_pptx.py`、`text_measure.py`、`deck_check.py` → `ppt-suggestion 的结果/渲染器/`。
-   用 `sample_style.py --seed <种子> --emit-constants <候选序号>` 输出的常量块替换副本顶部的常量；还要改风格就改副本，**不改 skill 原件**。
-4. 记下所用 seed 与候选序号，存为 `ppt-suggestion 的结果/style.json`，便于复现。
-
-### 阶段四：生成内容与微调版式（按 story.md + humanize.md + deck-schema.md）
-
-1. 完整或普通 Quick 按 `story.md` 写 `STORY.md`：意图（五句）→ 骨架（目录与章节一一对应、相邻页版式不同）→ 逐页。fast-lite 只保留一次紧凑事实清单，不生成完整 `STORY.md` 或设计锁定文件。
-2. **去 AI 味（必经步骤）**：完整或普通 Quick 对 `STORY.md` 与 `deck.json` 的全部文本按 `humanize.md` 的**全量规则**逐条自查；fast-lite 直接对 `deck.json` 做同样的文本检查。
-3. ⛔ **大纲确认门**：向用户列出每页一行结论句，没反对再往下（快速模式跳过；资料缺口改为交付时如实列出）。
-4. 按 `deck-schema.md` 写 `deck.json`；每页 block 以采样出的版式候选为起点，按内容微调。快速模式仍运行 `deck_check.py`，保留公式、图表、越界、溢出和严重重叠等 Hard 校验。
-   **渲染前跑渲染器副本里的校验**：`<py> 渲染器/deck_check.py deck.json`（用了特殊排版拓展加 `--extra-kinds bignum,asym,quote,diagonal,radial,ring,marginalia,concentric,quadrant`；完全遵循模板和半自主模式用 `scripts/deck_check.py deck.json --template-mode`，它只放宽无模板版式多样性门槛，不放宽标题、图表数据、公式和对象完整性要求），失败按错误解读表修复，禁止跳过。
-   正文里的行内数学写成 `$LaTeX$`（如 `$n_l$`），字面美元符号写 `\$`；语法见 `deck-schema.md`。
-5. 产物：`STORY.md`、`deck.json`。
-
-### 阶段五：排版渲染
-
-1. 无模板：
-   ```
-   <py> 渲染器/render_pptx.py --input deck.json --output "<中文文件名>.pptx"
-   ```
-2. 有模板（完全遵循）：按 `references/template-inherit.md` 写 `map.json`，再用 OfficeCLI 批量编辑模板副本：
-   ```
-   <py> scripts/template_fill.py --template 模板.pptx --deck deck.json --map map.json --output "<中文文件名>.pptx"
-   ```
-   半自主先按 `references/template-semi-autonomous.md` 写母页清单，生成并检查内容页母页：
-   ```
-   <py> scripts/template_mother.py --template 模板.pptx --manifest mothers.json --output mothers.pptx
-   ```
-   再在 `map.json` 中用 `clone_groups` 复制模板组合原子、填充组合内文字，并用 `template_fill.py` 生成最终页。母页只是规划和检查产物，最终输出仍从原模板复制，避免母页中间文件造成继承漂移。
-   ```
-   <py> scripts/template_fill.py --template 模板.pptx --deck deck.json --map map.json --output "<中文文件名>.pptx"
-   ```
-   `template_fill.py` 在 OfficeCLI 之前检查替换文字的容量（含竖排、不换行和 clone group 缩放）及替换图片的源像素与显示倍率。容量不足就换页、拆页或缩短标签；源图不清晰就换图，不用压缩字号硬塞。半自主母页生成后会输出 `<mothers.pptx>.text-evidence.json`，以清空后的实际文字作为 manifest 复核依据。
-3. deck 含 `formula` block 或正文含 `$...$` 行内公式时，渲染后跑：`<py> scripts/formula.py "<中文文件名>.pptx"`，把占位框与行内标记换成 PowerPoint 原生可编辑公式。
-4. 图表能力默认可用：有真实数据关系时使用 `chart` block。完全自主模式优先由 `power_pptx` 生成原生图表；完全遵循模板和半自主模式由 OfficeCLI 在模板副本中保留已有图表，或通过 `fields.chart` 同位替换顶层图片/图表。当前 `template_fill.py` 不支持任意坐标新增图表，也不自动执行 SVG 回退；需要时单独走明确的 OfficeCLI 编辑或 SVG 图片替换流程并校验。完全自主渲染器可显式用 `fallback: "svg"`，依赖 `matplotlib` 与 `cairosvg`。启用了其他拓展就按各自 `extensions/<名>/EXT.md` 处理；后处理类拓展在公式之后、结果校验之前运行。几何装饰的底纹只在用户明确允许且通过安全门槛时使用。
-5. 渲染器内置 deck 校验，失败会非 0 退出并打印原因：按报错改 `deck.json` 再跑。渲染与校验是前台短任务，不要放后台。
-6. 产物：`.pptx`（文字、原生图表、形状和原生公式可编辑；SVG/PNG 回退图表作为图片，需明确说明）。模板输出先在临时副本中编辑；先按动画计划处理对象时序与转场，再用 `repair_package(..., repair_animations=False)` 检查包引用和布局，成功后才替换输出。严格生成路径不会因悬空目标悄悄删除整页动画；计划写入 `.animation-plan.json`，最后必须运行 `template_animation.py` 复核。不能只以文字落位相等作为生成成功条件。
-
-### 阶段六：结果校验（按 references/validation.md）
-
-1. 机械校验：`<py> scripts/validate_pptx.py "<输出的.pptx>" --deck deck.json`（完全遵循模板和半自主模式加 `--baseline 模板.pptx`，忽略模板自带的越界）。模板图表替换还必须确认输出中存在原生 chart；母页必须确认只清除了 manifest 明确列出的内容。**Hard 问题必须为零**才交付；Soft 可接受（`--strict` 除外）。
-2. 模型自查：先逐页渲染成图片再看（支持视觉时必做）：
-   ```
-   <py> scripts/render_preview.py "<输出的.pptx>" -o <系统临时目录>/ppt_preview --sheet
-   ```
-
-   用 Read 看每一页（含公式的页加 `--render native` 才能看到真实公式），再对照 `validation.md` 的 Hard/Soft 清单复核。看见文字伸出标签、卡片或文本框即阻断交付，即使脚本报告为零。小修限位置、字号（±2pt 内）、间距、对齐、底衬；仍装不下就退回阶段四或五，重选模板页、拆分内容或调整结构，再重渲染、重校验。预览图不交付。
-3. 结构检查、HTML/原生静态目视检查、目标应用打开和实际放映分别记录，使用 `references/playback-report.md`。`template_animation.py` 只核对 XML 计划，`officecli validate` 与 HTML 预览不证明 Mac Office 无修复提示或动画播放；未做目标应用打开或放映时必须分别明确说明。资料缺口如实指出，不编造填充。
-4. 交付：只给 `.pptx` **绝对路径**；如需说明假设、模板继承回退或缺口，简短列出。
-
-## 纪律
-
-- **串行**：阶段顺序不可跳、不可并行合并。
-- **门禁即停**：⛔ 处等用户明确确认；大纲门与版式门以"用户没反对再往下"为准；快速模式除外。
-- **就地修复**：内容问题改规划产物，版式问题改 `deck.json` 重渲染，渲染器问题改项目里的渲染器副本。
-  每次修复重跑闭环：`deck_check.py` → 渲染 → `validate_pptx.py`。不推倒重来。
-- **不虚构**：资料没有的数据、结论、案例一律不写；"显著/领先/国际先进"必须有资料依据。
-- **像人做的**：最终效果应像领域专业人士手工制作，不是 AI 模板味。有疑问时先自查
-  `references/humanize.md` 与 `references/design.md` 的禁止项。
-
-## 产物与位置
-
-- 中间文件与产物默认放在工作区 `ppt-suggestion 的结果/`：`材料摘要.md`、`模板摘要.md`、`STORY.md`、
-  `style.json`、`渲染器/`、`deck.json`、`<中文名>.pptx`、`校验报告.md`。
-- 页面管理优先依托母版和版式：有模板时继承模板版式，而不是每页自由发挥。
+中间文件与产物默认放工作区 `ppt-suggestion 的结果/`：材料/模板摘要、`STORY.md`（完整/Quick）、`style.json` 与 `渲染器/`（完全自主）、`deck.json`、map/manifest 与母页（相应模板模式）、`<中文名>.pptx`、模板动画计划与校验报告。页面管理优先依托母版和版式，有模板时继承其设计语言。

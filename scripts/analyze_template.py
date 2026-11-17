@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze a PPTX template for ppt-suggestion (README §1.1 模板分析).
+"""Analyze a PPTX template for ppt-suggestion (references/source-intake.md).
 
 Extracts: slide size, masters, layouts with placeholders, theme colors,
 header/footer/page-number clues. Writes a JSON sidecar and a human-readable

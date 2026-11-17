@@ -765,8 +765,8 @@ def _figure(slide, x, y, w, b, style):
     add_rect(slide, ix, y, dw, dh, None, line=LINE, line_w=0.5)
     if caption:
         add_text(slide, ix, y + dh + 0.07, dw, 0.25, caption, size=10, color=FAINT)
+    ty = y
     if side:
-        ty = y
         if side.get("kicker"):
             add_text(slide, tx, ty, tw, 0.3, side["kicker"], size=11, bold=True, color=FAINT)
             ty += 0.35
@@ -779,7 +779,7 @@ def _figure(slide, x, y, w, b, style):
             add_hline(slide, tx, tx + tw, ty - 0.06, color=LINE, w=0.5)
             add_text(slide, tx, ty, tw, ih + 0.15, str(it), size=12, color=TEXT, line_spacing=1.25)
             ty += ih + 0.22
-    return dh + cap_h
+    return max(dh + (0.32 if caption else 0.0), ty - y)
 
 
 CHART_TYPES = {
@@ -951,7 +951,197 @@ def _chart(slide, x, y, w, b, style):
     return (CONTENT_BOTTOM - y) if source else h + (top - y)
 
 
+# 日常语义版式；asym 为约 7:3 主次布局，一般主次论证优先 split。
+def _layout_items(b, field, minimum, maximum, kind):
+    """超出容量就报错，不能通过切片静默丢失资料。"""
+    items = b.get(field, [])
+    if not isinstance(items, list) or not minimum <= len(items) <= maximum:
+        raise ValueError(f"{kind}.{field} 必须有 {minimum}–{maximum} 项；请调整结构或拆页")
+    return items
+
+
+def _point_texts(items):
+    return [it if isinstance(it, str) else it.get("text", "") for it in items]
+
+
+def _bignum(slide, x, y, w, b, style):
+    lw = w * 0.5
+    rx = x + lw + 0.6
+    rw = w - lw - 0.6
+    ly = y
+    if b.get("kicker"):
+        add_text(slide, x, ly, lw, 0.3, b["kicker"], size=11, bold=True, color=FAINT)
+        ly += 0.4
+    add_text(slide, x, ly, lw, 1.5, str(b.get("value", "")), size=72, bold=True,
+             color=ACCENT_DK, anchor=MSO_ANCHOR.MIDDLE, wrap=False)
+    ly += 1.65
+    t = b.get("title", "")
+    if t:
+        th = text_height(t, 18, lw)
+        add_text(slide, x, ly, lw, th + 0.1, t, size=18, bold=True)
+        ly += th + 0.2
+    body = b.get("body", "")
+    if body:
+        bh = text_height(body, 14, lw)
+        add_text(slide, x, ly, lw, bh + 0.1, body, size=14, color=SUBTLE, line_spacing=1.25)
+        ly += bh + 0.1
+    add_rect(slide, x + lw + 0.3, y, 0.02, max(ly - y, 2.4), LINE)
+    ry = y + 0.1
+    for i, text in enumerate(_point_texts(_layout_items(b, "items", 0, 3, "bignum"))):
+        ih = max(0.8, text_height(text, 14, rw - 0.7) + 0.35)
+        add_text(slide, rx, ry, 0.5, 0.3, f"{i + 1:02d}", size=13, bold=True, color=ACCENT)
+        add_text(slide, rx + 0.6, ry, rw - 0.6, ih - 0.2, text, size=14, color=TEXT, line_spacing=1.25)
+        add_hline(slide, rx, rx + rw, ry + ih - 0.1, color=LINE, w=0.5)
+        ry += ih
+    return max(ly - y, ry - y, 2.4)
+
+
+def _asym(slide, x, y, w, b, style):
+    left = b.get("left", {})
+    right = b.get("right", {})
+    gap = 0.35
+    lw = (w - gap) * 0.7
+    rw = (w - gap) * 0.3
+    ly = y
+    if left.get("kicker"):
+        add_text(slide, x, ly, lw, 0.3, left["kicker"], size=11, bold=True, color=FAINT)
+        ly += 0.35
+    t = left.get("title", "")
+    if t:
+        th = sum(text_height(seg, 24, lw) for seg in t.split("\n")) + 0.1 * t.count("\n")
+        add_text(slide, x, ly, lw, th + 0.2, t, size=24, bold=True, line_spacing=1.1)
+        ly += th + 0.35
+    body = left.get("body", "")
+    if body:
+        bh = text_height(body, 14, lw)
+        add_text(slide, x, ly, lw, bh + 0.1, body, size=14, color=SUBTLE, line_spacing=1.25)
+        ly += bh + 0.1
+    items = _point_texts(_layout_items(right, "items", 0, 4, "asym.right"))
+    ihs = [max(0.5, text_height(it, 13, rw - 0.4) + 0.16) for it in items]
+    ph = 0.55 + sum(ihs) + 0.25
+    h = max(ly - y, ph, 2.2)
+    rx = x + lw + gap
+    add_rect(slide, rx, y, rw, h, PANEL)
+    if right.get("kicker"):
+        add_text(slide, rx + 0.2, y + 0.15, rw - 0.4, 0.3, right["kicker"], size=11, bold=True,
+                 color=ACCENT_DK)
+    ry = y + 0.55
+    for it, ih in zip(items, ihs):
+        add_text(slide, rx + 0.2, ry, rw - 0.4, ih, it, size=13, color=TEXT)
+        ry += ih
+    return h
+
+
+def _quote(slide, x, y, w, b, style):
+    text = str(b.get("text", "")).strip()
+    if not text:
+        return 0.8
+    mark = str(b.get("mark", "“"))
+    body_w = w - 0.8
+    th = max(0.9, text_height(text, 24, body_w, 1.2))
+    add_text(slide, x, y - 0.05, 0.45, 1.05, mark, size=48, bold=True, color=ACCENT,
+             wrap=False)
+    add_text(slide, x + 0.55, y + 0.12, body_w, th + 0.1, text, size=24, bold=True,
+             color=TEXT, line_spacing=1.2)
+    source = str(b.get("source", "")).strip()
+    h = max(1.5, 0.12 + th)
+    if source:
+        add_hline(slide, x + 0.55, x + 2.0, y + h + 0.22, color=LINE, w=0.5)
+        add_text(slide, x + 0.55, y + h + 0.32, body_w, 0.25, source, size=11, color=FAINT)
+        h += 0.55
+    return h
+
+
+def _marginalia(slide, x, y, w, b, style):
+    """主文加边注：边注只承载定义、边界或补充证据。"""
+    main = b.get("main", {})
+    notes = _layout_items(b, "notes", 0, 3, "marginalia")
+    gap = 0.45
+    note_w = min(3.0, w * 0.25)
+    main_w = w - note_w - gap
+    my = y
+    if main.get("kicker"):
+        add_text(slide, x, my, main_w, 0.3, main["kicker"], size=11, bold=True, color=FAINT)
+        my += 0.38
+    title = str(main.get("title", ""))
+    if title:
+        th = text_height(title, 25, main_w, 1.1)
+        add_text(slide, x, my, main_w, th + 0.1, title, size=25, bold=True, line_spacing=1.1)
+        my += th + 0.3
+    body = str(main.get("body", ""))
+    if body:
+        bh = text_height(body, 14, main_w, 1.25)
+        add_text(slide, x, my, main_w, bh + 0.1, body, size=14, color=SUBTLE, line_spacing=1.25)
+        my += bh + 0.1
+    h = max(2.0, my - y)
+    nx = x + main_w + gap
+    ny = y + 0.05
+    for note in notes:
+        if not isinstance(note, dict):
+            continue
+        label = str(note.get("label", "")).strip()
+        text = str(note.get("text", "")).strip()
+        if label:
+            add_text(slide, nx, ny, note_w, 0.25, label, size=10, bold=True, color=ACCENT_DK)
+            ny += 0.3
+        if text:
+            nh = text_height(text, 12, note_w, 1.2)
+            add_text(slide, nx, ny, note_w, nh + 0.05, text, size=12, color=SUBTLE, line_spacing=1.2)
+            ny += nh + 0.25
+        h = max(h, ny - y)
+    add_rect(slide, nx - gap * 0.5, y, 0.02, max(2.0, h), LINE)
+    return h
+
+
+def _quadrant(slide, x, y, w, b, style):
+    """四象限判断：四项必须互斥，中心只保留一个短标题。"""
+    items = _layout_items(b, "items", 4, 4, "quadrant")
+    if any(not isinstance(it, dict) for it in items):
+        raise ValueError("quadrant.items 每项必须是对象")
+    if len(items) != 4:
+        return 0.8
+    gap = 0.28
+    col_w = (w - gap) / 2
+    box_h = 1.25
+    row_gap = 0.38
+    total_h = box_h * 2 + row_gap
+    for i, item in enumerate(items):
+        col, row = i % 2, i // 2
+        bx = x + col * (col_w + gap)
+        by = y + row * (box_h + row_gap)
+        add_rect(slide, bx, by, col_w, box_h, PANEL, line=LINE, line_w=0.5,
+                 shape=MSO_SHAPE.ROUNDED_RECTANGLE)
+        key = str(item.get("key", "")).strip()
+        title = str(item.get("title", "")).strip()
+        body = str(item.get("body", "")).strip()
+        if key:
+            add_text(slide, bx + 0.18, by + 0.14, col_w - 0.36, 0.3, key,
+                     size=10, bold=True, color=ACCENT_DK)
+        if title:
+            add_text(slide, bx + 0.18, by + 0.42, col_w - 0.36, 0.35, title,
+                     size=14, bold=True)
+        if body:
+            add_text(slide, bx + 0.18, by + 0.74, col_w - 0.36, 0.5, body,
+                     size=11, color=SUBTLE, line_spacing=1.1)
+    center = b.get("center", {})
+    title = str(center.get("title", "")).strip()
+    if title:
+        size = 0.72
+        add_rect(slide, x + w / 2 - size / 2, y + total_h / 2 - size / 2,
+                 size, size, ACCENT, shape=MSO_SHAPE.OVAL)
+        add_text(slide, x + w / 2 - size / 2 + 0.06, y + total_h / 2 - 0.16,
+                 size - 0.12, 0.32, title, size=10, bold=True, color=WHITE,
+                 align=PP_ALIGN.CENTER, anchor=MSO_ANCHOR.MIDDLE)
+    return total_h
+
+
+
 BLOCK_RENDERERS = {
+    "bignum": _bignum,
+    "asym": _asym,
+    "quote": _quote,
+    "marginalia": _marginalia,
+    "quadrant": _quadrant,
     "chart": _chart,
     "figure": _figure,
     "lead": _lead,

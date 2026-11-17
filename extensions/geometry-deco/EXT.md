@@ -20,7 +20,7 @@ python extensions/geometry-deco/add_deco.py 成品.pptx \
 
 ## 模式与安全 profile
 
-`--mode auto` 为默认值，等同于原有的角落装饰行为；`--mode corner` 显式保留该行为。只有明确传入 `--mode background` 才会尝试底纹，底纹不会由 `auto` 自动启用。
+`--mode auto` 为默认值，使用角落装饰；`--mode corner` 显式选择角落装饰。只有明确传入 `--mode background` 才会尝试底纹，底纹不会由 `auto` 自动启用。
 
 `--profile` 默认是 `formal`，只允许低密度 `circles` 或 `lines`，并限制形状复杂度、页面覆盖率和不透明度。`balanced` 放宽这些门槛，`expressive` 允许完整模板库，但仍受安全检查约束。示例：
 
@@ -38,7 +38,7 @@ python extensions/geometry-deco/add_deco.py 成品.pptx \
 
 ## 可选母题
 
-`--motif` 支持参考资料中的完整 41 个模板，以及原有的 3 个基础母题。模板函数统一使用 1280×720 坐标，并输出 PowerPoint 原生可编辑形状；下列 ID 都已经通过独立 PPTX、LibreOffice PDF 转换和逐页 PNG 渲染回归。
+`--motif` 支持 41 个纹样模板与 3 个基础母题。模板函数统一使用 1280×720 坐标，并输出 PowerPoint 原生可编辑形状；下列 ID 可用于 `--motif`，最终效果仍须逐页检查。
 
 | 家族 | 模板 ID |
 |---|---|
@@ -50,7 +50,7 @@ python extensions/geometry-deco/add_deco.py 成品.pptx \
 | 西亚/欧洲铺砌 | `tumbling-blocks`、`star-cross`、`ichimatsu`、`argyle`、`meander`、`egg-dart`、`herringbone`、`basket-weave` |
 | 放射与中式 | `sunburst`、`fangsheng`、`bead-reel`、`qiulu` |
 
-基础母题保持向后兼容：不传参数时仍使用最克制的 `circles`；传入 `--seed` 时从完整 ID 集合中可复现地选择；传入 `--motif <ID>` 时固定使用指定模板。完整模板库默认不会自动启用，也不改变本 skill 的白底极简、单强调色和低干扰规则。
+不传选型参数时使用 `circles`；`--seed` 从完整 ID 集合可复现选择，`--motif <ID>` 固定指定模板。母题选择不改变白底极简、单强调色与低干扰规则；背景模式还受 profile 限制。
 
 ## 页型规则
 
@@ -69,7 +69,7 @@ python extensions/geometry-deco/add_deco.py 成品.pptx \
 - 大构图只放在一侧，内容页的小角标不能与标题、页码、页脚争夺焦点。
 - 装饰色必须来自正文强调色；浅色块由脚本自动取强调色的浅色混合，不新增颜色。
 - 装饰放在最底层，不遮挡文字、图片主体或模板页眉页脚。
-- 参考资料中的复杂纹样只在内容确实需要时使用；商务、政务和工程汇报优先 `circles`、`blocks`、`lines`。
+- 复杂纹样只在内容确实需要时使用；商务、政务和工程汇报优先 `circles`、`blocks`、`lines`。
 - 后处理顺序固定为：渲染 → `formula.py` → 几何装饰 → 动效 → `validate_pptx.py` → `render_preview.py`。
 
 ## 结果检查

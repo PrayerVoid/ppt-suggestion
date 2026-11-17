@@ -16,37 +16,39 @@ import random
 import sys
 
 # ---------------- 软偏好：权重倍数（倍数越小概率越低） ----------------
-SAT_HIGH, SAT_HIGH_W = 0.6, 0.05    # design.md:26 禁鲜艳颜色：高饱和强调色概率大幅下降
-SAT_LOW, SAT_LOW_W = 0.18, 0.3      # design.md:16 低饱和但要可辨：近灰色略降
-PRIMARY_DEG, PRIMARY_W = 15, 0.2    # design.md:16 避免纯色：近纯红/绿/蓝（且 S>0.8）再降
-L_MID, L_SIGMA = 0.38, 0.10         # design.md:16 低亮度：强调色亮度集中在中低段
-PURE_BLACK_W = 0.1                  # design.md:16 避免纯色：正文近纯黑概率下降
+SAT_HIGH, SAT_HIGH_W = 0.6, 0.05    # design.md 配色偏好：高饱和强调色概率大幅下降
+SAT_LOW, SAT_LOW_W = 0.18, 0.3      # design.md 配色偏好 低饱和但要可辨：近灰色略降
+PRIMARY_DEG, PRIMARY_W = 15, 0.2    # design.md 配色偏好 避免纯色：近纯红/绿/蓝（且 S>0.8）再降
+L_MID, L_SIGMA = 0.38, 0.10         # design.md 配色偏好 低亮度：强调色亮度集中在中低段
+PURE_BLACK_W = 0.1                  # design.md 配色偏好 避免纯色：正文近纯黑概率下降
 SCENE_W = 1.35                      # 场景色相仅轻微加权；低饱和不等于偏绿
-ASYM_W, CARDS_W = 1.3, 0.4          # design.md:68 非对称/结构版式加权；design.md:27 卡片降权
+ASYM_W, CARDS_W = 1.3, 0.4          # design.md 页面节奏：非对称/结构加权，卡片降权
 
 SCENE_HUE = {"学术": (200, 260), "工程": (170, 230), "商务": (190, 250),
              "政务": (345, 20), "教育": (90, 170)}
 
 # ---------------- 硬约束 ----------------
-MIN_TEXT = 4.5     # validation.md:72 小字对比度 ≥ 4.5:1
+MIN_TEXT = 4.5     # design.md 对比度 小字对比度 ≥ 4.5:1
 MIN_FAINT = 2.5    # 仅页脚/图注使用的次要元数据，放宽
 CHECKS = [("TEXT", "WHITE", MIN_TEXT), ("TEXT", "PANEL", MIN_TEXT), ("TEXT", "ACCENT_LT", MIN_TEXT),
           ("SUBTLE", "WHITE", MIN_TEXT), ("SUBTLE", "PANEL", MIN_TEXT),
           ("ACCENT", "WHITE", MIN_TEXT), ("ACCENT_DK", "WHITE", MIN_TEXT),
           ("ACCENT_DK", "ACCENT_LT", MIN_TEXT), ("FAINT", "WHITE", MIN_FAINT)]
 
-# 版式分类：非对称/结构版式（design.md:68、story.md:23）、结构页（deck-schema.md:341）、不计种类的辅助块
-ASYM = {"split", "layers", "rows", "stats", "compare", "pipeline", "hub", "timeline"}
+# 版式分类：非对称/结构版式（design.md 页面节奏）、结构页（design.md 页面节奏）、不计种类的辅助块
+ASYM = {"split", "asym", "bignum", "marginalia", "layers", "rows", "stats", "compare", "pipeline", "hub", "timeline"}
 STRUCT = {"layers", "steps", "rows", "pipeline", "hub", "timeline", "compare"}
 AUX = {"lead", "insight", "chips"}
 GRID = {"cards", "columns"}
-CARDS_ROWS = {4: 2, 6: 3, 8: 4, 9: 3}   # deck-schema.md:221 条目数 → columns
+CARDS_ROWS = {4: 2, 6: 3, 8: 4, 9: 3}   # deck-schema.md cards 条目数 → columns
 ITEMS = {"stats": (3, 4), "columns": (2, 3), "steps": (3, 5), "chips": (6, 10), "pipeline": (3, 5),
-         "hub": (3, 6), "timeline": (3, 5), "points": (3, 5), "compare": (3, 5), "callouts": (2, 2)}
+         "hub": (3, 6), "timeline": (3, 5), "points": (3, 5), "compare": (3, 5), "callouts": (2, 2), "quadrant": (4, 4)}
 RECIPES = ["stats", "stats+insight", "lead+stats", "layers", "layers+insight", "pipeline",
            "pipeline+insight", "hub", "timeline", "timeline+insight", "compare", "compare+insight",
            "rows", "steps+callouts", "steps+chips", "split", "split+insight", "table",
-           "table+insight", "lead+columns", "lead+points", "points", "cards"]
+           "table+insight", "lead+columns", "lead+points", "points", "cards", "marginalia", "quadrant"]
+# bignum/quote 依赖真实数字或可追溯引文，不随机推荐；主次候选优先 split，asym 可按内容手动选择。
+# figure/chart/formula 同样按资料选择，不因采样结果补造素材。
 MAX_INSIGHT, MIN_INSIGHT, MAX_CARDS, MAX_BLOCKS = 6, 3, 2, 3
 
 

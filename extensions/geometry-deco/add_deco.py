@@ -64,10 +64,10 @@ FAMILIES = {
     ],
 }
 
-# 参考资料中的完整模板库作为可选扩展；默认仍是 circles。
+# 纹样模板库作为可选扩展；默认使用 circles。
 MOTIF_NAMES = tuple(FAMILIES) + TEMPLATE_IDS
 
-# 背景模式的安全上限。角落模式不使用这些限制，以保持旧行为。
+# 背景模式的安全上限；角落模式使用内容避让检查。
 PROFILES = {
     "formal": {
         "motifs": frozenset(("circles", "lines")),
@@ -566,7 +566,7 @@ def main() -> int:
     ap.add_argument("--motif", choices=MOTIF_NAMES,
                     help="固定几何母题；不传时由 seed 选择，未传 seed 使用 circles")
     ap.add_argument("--mode", choices=("corner", "background", "auto"), default="auto",
-                    help="corner 保持旧行为；background 必须显式启用；auto 默认走 corner")
+                    help="corner 使用角落装饰；background 必须显式启用；auto 默认走 corner")
     ap.add_argument("--profile", choices=tuple(PROFILES), default="formal",
                     help="背景安全门槛：formal、balanced 或 expressive")
     ap.add_argument("--accent", default="4F6082")

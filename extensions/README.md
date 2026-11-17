@@ -1,15 +1,18 @@
-拓展索引。图表能力默认开启；其余拓展没有明确启用时，不需要阅读本目录。
+# 扩展索引
 
-| 拓展 | 目录 | 做什么 | 启用条件 |
-|---|---|---|---|
-| 图表 | `charts/` | `chart` block：无模板优先生成原生 `power_pptx` 图表；完全遵循/半自主模板由 OfficeCLI 保留、替换或新增 native chart，不支持或兼容性不稳定时用 SVG 兜底 | 默认开启；有真实数据时使用 |
-| 动效 | `animation/` | 页间基础转场 + 内容页逐块入场，对成品 pptx 后处理 | 用户在询问阶段选了“动效” |
-| 几何装饰 | `geometry-deco/` | 对成品 pptx 按页类型增加一套可编辑几何母题；支持 3 个基础母题和参考资料中的完整 41 个模板 | 用户选了“几何装饰” |
-| 特殊排版 | `special-layout/` | 追加 `bignum`、`asym`、`quote`、`diagonal`、`radial`、`ring`、`marginalia`、`concentric`、`quadrant` block | 用户选了“特殊排版” |
+本文件负责能力入口、启用条件与执行顺序。图表能力默认可用，使用图表时阅读其 EXT；其余扩展须用户启用后才读。核心版式与图片构图见 [layout-types.md](../references/layout-types.md)。
 
-约定：
+| 能力 | 说明入口 | 启用条件 |
+|---|---|---|
+| 图表 | [charts/EXT.md](charts/EXT.md)：完全自主原生/图片回退，模板 OfficeCLI 同位替换及限制 | 默认可用，仅有真实数据关系时使用 |
+| 动效 | [animation/EXT.md](animation/EXT.md)：成品页间转场与内容入场 | 用户明确选择动效 |
+| 几何装饰 | [geometry-deco/EXT.md](geometry-deco/EXT.md)：3 个基础母题与 41 个纹样模板，原生可编辑形状 | 用户启用几何装饰；底纹另行明确允许 |
+| 特殊排版 | [special-layout/EXT.md](special-layout/EXT.md)：diagonal、radial、ring、concentric 的渲染器接入 | 用户启用特殊排版 |
 
-- 每个子目录的 `EXT.md` 是该拓展的完整说明；图表默认阅读，其他拓展只读用户选中的那几个。
-- 后处理类拓展（动效、几何装饰）在排版渲染和 `formula.py` 之后、结果校验之前运行，顺序为几何装饰 → 动效，输出新文件，不覆盖原 pptx。
-- 装饰形状命名以 `DECO_` 开头，公式形状以 `FORMULA_` 开头，其他拓展靠前缀识别它们。
-- 脚本使用项目 `.venv` 的 python 运行。
+## 执行约定
+
+- 特殊排版在渲染器副本中接入，图表在渲染或模板填充阶段完成。
+- 后处理顺序为“渲染/模板填充 → formula（如有）→ 几何装饰（如启用）→ 动效（如启用）→ 最终校验与逐页预览”。后处理输出新文件，不覆盖输入 PPTX。
+- 使用项目 `.venv` 解释器。装饰对象以 `DECO_` 命名；公式占位对象以 `FORMULA_` 命名，后续脚本据此前缀识别。
+- 模板动画保留、清除与计划核对归 [template-animation.md](../references/template-animation.md)；新增动效需自己的目标/点击计划。所有形状后处理完成后复核适用计划，不能以静态结构通过声称实际播放已验证。
+- 最终 Hard/Soft 检查及验证范围按 [validation.md](../references/validation.md)。

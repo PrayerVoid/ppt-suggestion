@@ -1,7 +1,7 @@
 # deck.json 结构说明（写 deck.json 与跑 deck_check 前必读）
 
 > 设计要求：页面标题必须是结论句；目录与章节层级清晰、编号前后一致；输出为可编辑 PPT。
-> 视觉/配色/密度下限在 `design.md`；版式匹配在 `template-inherit.md`。
+> 视觉与密度在 [design.md](design.md)，选型在 [layout-types.md](layout-types.md)，模板映射在 [template-inherit.md](template-inherit.md)。
 
 ## 1. 根对象
 
@@ -15,7 +15,7 @@
 `source` 写入正文页脚注。无模板时画布 16:9；有模板时由模板决定。deck.json 里没有颜色、主题或样式字段：
 配色与基本版式在阶段三写进渲染器副本的顶部常量，不进 JSON。
 
-**通用要求**：`items[]` 里的条目 `body` 都必须是能读出信息的句子（≥10 字）。不要为了填满页面硬凑条目。
+**通用要求**：条目说明必须有信息；具体字段按各 kind 定义，不是所有 items 都使用 body。密度和全稿节奏以 design 为准，机械检查的实际范围见 §4。示例只展示字段，不是完整可交付 deck；不得把示例数值或引文当作项目事实。
 
 ## 2. slides[].type
 
@@ -97,7 +97,7 @@
 
 ### insight
 
-本页「所以呢」。浅灰横条 + 强调色左边条，全稿 3–6 条。
+本页「所以呢」。浅灰横条 + 强调色左边条；使用频次按 design 的页面节奏。
 
 ```json
 { "kind": "insight", "kicker": "结论", "text": "计量体系支撑治理。" }
@@ -219,7 +219,7 @@
 
 ### cards
 
-2×2 / 2×4 / 3×3 网格。`items` 数量必须能整行铺满（4/6/8/9），禁止 5 个留空。全稿 ≤ 2 页。
+网格分组。`items` 数量必须能整行铺满（4/6/8/9），禁止 5 个留空；columns 与条目数量相配。全稿限制见 design。
 
 ```json
 {
@@ -342,7 +342,7 @@
 引用资料中的原图，等比缩放放入，不拉伸。仅当用户在询问阶段允许复用资料图片时使用。`src` 相对 deck.json 所在目录；`side` 可选，是图旁的文字栏
 （`kicker` / `title` / `items` 字符串列表）；`image_side` 为 `left` 或 `right`（默认 right）；
 `image_ratio` 图占宽度比例（有 `side` 时默认 0.62）；`height` 图的最大高度（英寸），同页还有别的
-block 时必须设置。图宽过小的截图（如 400px）不要放太大，否则会糊。
+block 时必须设置。block 的占用高度取图片（含图注）与侧栏文字的较大值，`height` 不是文字栏高度上限。`figure` 不支持多图网格、透视或不规则图片裁剪；图片构图选型见 [layout-types.md](layout-types.md#图片构图)。图宽过小的截图（如 400px）不要放太大，否则会糊。
 
 ```json
 {
@@ -353,6 +353,92 @@ block 时必须设置。图宽过小的截图（如 400px）不要放太大，�
   "image_ratio": 0.5,
   "height": 4.3,
   "side": { "kicker": "火山 · 原理", "title": "一句话标题", "items": ["要点一", "要点二"] }
+}
+```
+
+### 日常语义版式（核心内置）
+
+以下为核心 kind；选型见 layout-types，密度与全稿节奏见 design。
+
+### bignum
+
+适合真正需要观众先记住的数字。整页以一个数字为视觉锚点，右侧 `items` 最多 3 条解释，使用频次按 design；数字不能由版式自行推算或编造。用 body/items 写清来源、口径和含义。
+
+```json
+{
+  "kind": "bignum",
+  "kicker": "资料中的关键指标",
+  "value": "<原始数值及单位>",
+  "title": "资料支持的指标判断",
+  "body": "填写资料来源、统计时间和比较口径。",
+  "items": ["填写资料支持的指标含义", "填写适用范围与限制"]
+}
+```
+
+### asym
+
+约 7:3 的主次布局；一般主次论证优先 `split`。左侧 `title` 是结论句，正文宜不超过 4 行；右侧 `items` 最多 4 条，每条只表达一个依据。
+
+```json
+{
+  "kind": "asym",
+  "left": {
+    "kicker": "主论点",
+    "title": "主次关系决定版式取舍",
+    "body": "左右分区可用于图文并置、主次论证或对照，必须按实际信息关系选择。"
+  },
+  "right": {
+    "kicker": "依据",
+    "items": ["图文并置用 figure 的文字侧栏", "主次论证优先使用 split"]
+  }
+}
+```
+
+### quote
+
+只用于真正的引语或需要原样保留的观点。`source` 写说话者、文件或页码；没有来源时应改用 `lead`、`insight` 或普通结构 block。
+
+```json
+{
+  "kind": "quote",
+  "text": "<需要原样保留的资料原文>",
+  "source": "<说话者或文件名及页码>"
+}
+```
+
+### marginalia
+
+适合研究说明、定义、边界条件和补充证据。主文区 `main` 承载完整判断，右侧 `notes` 最多 3 条，只保留能回指主文的边注。超量报错，不静默截断。
+
+```json
+{
+  "kind": "marginalia",
+  "main": {
+    "kicker": "定义",
+    "title": "治理边界必须先于工具选择明确",
+    "body": "主文区承载完整判断，右侧只保留补充说明与边界条件。"
+  },
+  "notes": [
+    { "label": "边界 01", "text": "不把供应商能力等同于组织治理能力。" },
+    { "label": "边界 02", "text": "注释必须能回指主文中的具体判断。" }
+  ]
+}
+```
+
+### quadrant
+
+适合已明确定义的四类判断或 SWOT 类信息，`items` 必须正好 4 项，每项短标题与一句说明。它是四组分类布局，不生成二维轴、阈值或散点；真实风险矩阵优先用 `table` 表达已定义的维度。中心标题只承担分类主题，不用于替代 `compare` 的现状与目标两栏。以下仅示范 SWOT 字段，实际判断须来自资料。
+
+```json
+{
+  "kind": "quadrant",
+  "center": { "title": "治理" },
+  "items": [
+    { "key": "S", "title": "优势", "body": "填写资料支持的内部优势与适用范围" },
+    { "key": "W", "title": "劣势", "body": "填写资料已说明的内部不足及影响" },
+    { "key": "O", "title": "机会", "body": "填写有来源的外部机会与成立条件" },
+    { "key": "T", "title": "威胁", "body": "填写有来源的外部风险与应对边界" }
+  ]
 }
 ```
 
@@ -378,24 +464,24 @@ block 时必须设置。图宽过小的截图（如 400px）不要放太大，�
 
 上例只展示字段结构，数值必须替换为资料中的真实数据。每个图表必须提供 `source`、`table_view` 或 `accessibility_note` 至少一项，说明来源、口径、时间范围或读图方式；多系列图表尤其不能省略。禁止使用 `secondary_axis`；需要双轴时改用同一坐标口径、拆分图表或文字说明。原生白名单之外的类型必须使用 `fallback: "svg"`。支持的原生类型见 `extensions/charts/EXT.md`。
 
-模板模式按四种模式区分图表职责：完全遵循模板可以保留已有图表，也可以用 OfficeCLI 将顶层图片/图表位替换成同尺寸 native chart，或在明确位置新增 chart；半自主可以从内容页母页扩展 chart，并使用模板主题色、字体和版式骨架；两个完全自主模式继续由 `power_pptx` 原生渲染，必要时使用 SVG fallback。复杂嵌套图表或系列结构大幅变化时必须明确回退，不得让图表静默丢失。
+图表实现分工、模板同位替换限制和回退操作以 [charts/EXT.md](../extensions/charts/EXT.md) 为准。`chart` block 不会让模板 map 自动新增自由坐标图表。
 
-## 4. 质量检查清单（写 JSON 前过一遍，`deck_check.py` 会强制执行）
+## 4. 渲染前机械检查（deck_check.py）
 
-- 每页 `content.title` 是结论，不是模块名（≥8 字）
-- 有 `section` 必须有 `catalog`，且 `section` 数量/标题与目录条目一致
-- 全稿至少 **2 页**结构页（`layers` / `steps` / `rows` / `pipeline` / `hub` / `timeline` / `compare`）
-- 全稿至少用到 **5 种**不同版式（`lead` / `insight` / `chips` 不计）
-- 每页正文总字数 ≥ 110 字；`cards` / `columns` / `pipeline` / `points` / `callouts` / `timeline` 的每条 `body` ≥ 10 字
-- 没有只放 `lead` / `insight` / `chips` 的页
-- 等宽 `cards` 全稿 ≤ 2 页；禁止连续两页 `cards`/`columns`
-- 不要给 block 加颜色字段（color / fontSize / hex 一律禁止）
-- `formula` 的 `latex` 必填且非空
-- `chart` 只能使用真实数据；必须有 `source`、`table_view` 或 `accessibility_note` 至少一项，禁止 `secondary_axis`
-- 文本里的行内公式 `$...$` 的 `$` 必须成对，字面美元符号写成 `\$`
-- 模板模式（`deck_check.py --template-mode`）：版式由模板决定，上面关于字数、版式种类、结构页、`cards` 与相邻页版式的检查全部跳过；
-  仍检查目录与章节一致、标题 ≥8 字、禁止视觉字段、block kind 合法、`formula` 的 `latex`、`$` 配对
-- 启用了特殊排版拓展时，`bignum` / `asym` / `quote` / `diagonal` / `radial` / `ring` / `marginalia` / `concentric` / `quadrant` 等新增 kind 要用 `deck_check.py --extra-kinds` 放行（字段见 `extensions/special-layout/EXT.md`）
+本节描述脚本实际阻断的条件；视觉、密度和页面节奏的完整规范在 design。脚本通过仍需人工复核，句式与文风只由 humanize 检查。
+
+| 范围 | 实际检查 |
+|---|---|
+| 全部模式 | slides 非空，页面 type 合法，标题及相应 blocks 必填；正文标题至少 8 字；catalog 与 section 双向对应、数量和标题一致 |
+| 全部模式的 block | kind 合法，block 不携带 color/fontSize/hex；formula.latex 非空；文本 `$` 成对且不是空公式 `$$`，字面美元符号用 `\$` |
+| 全部模式的图表 | chart_type/fallback 合法、系列非空且名称唯一、数值有限、分类与系列长度一致；分类图表不允许单类别；饼/环图非负且至少一个正值，散点字段完整、气泡 size 为正；source/table_view/accessibility_note 至少一项，禁止 secondary_axis |
+| 完全自主正文 | collect_text 收集的 block 文本合计至少 110 字符（不计页面标题，不等于纯汉字数）；存在的 items[].body 至少 10 字；不能仅有 lead/insight/chips |
+| 完全自主全稿 | cards/columns 合计最多 2 页，不能连续；正文至少 5 种 kind（lead/insight/chips 不计）；至少出现一种结构 kind（layers/steps/rows/pipeline/hub/timeline/compare） |
+| 模板 `--template-mode` | 跳过上述完全自主正文/全稿项；仍检查其余结构、字段、图表和公式条件 |
+
+规划要求的至少 2 页结构页、40% 非对称/结构、insight 数量、bignum 页数以及条目语义需按 design 人工检查。deck_check 不检查所有 kind 的条目容量；容量由各渲染函数及模板容量门禁处理，不能把未知字段或超量条目视为有效能力。
+
+特殊排版仅用 `--extra-kinds diagonal,radial,ring,concentric` 放行，且须按其 EXT 注册渲染函数；26 个核心 kind 无需该参数。快速模式使用同一校验入口，不跳过完全自主门槛。
 
 ## 5. deck_check.py 错误解读
 

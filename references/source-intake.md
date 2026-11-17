@@ -69,16 +69,9 @@ page.get_pixmap(dpi=200, clip=pymupdf.Rect(70, 90, 540, 360)).save("fig4.png")  
 
 ### 3.1 模板动画 inventory（阶段一必做）
 
-无论用户是否启用可选动效，只要输入包含模板，就在阶段一对同一份只读 `power_pptx Presentation` 运行 `scripts/animation_inventory.py` / `inventory(prs)`。必须分别检查并记录：
+只要输入包含模板，无论是否启用动效，都按 [template-animation.md](template-animation.md) 完成三层静态 inventory（含 MC 分支），分别记录对象动画与转场、悬空目标、段落构建、共享继承与 Morph 等风险。`analyze_template.py` 已包含扫描结果，同次分析可复用，不必重复跑独立清单脚本。
 
-- `slideMasters`、`slideLayouts`、实际 `slides` 三层；每页的 source part、master/layout 关系；母版或版式时序的继承关系。
-- 每个部件的 `p:timing`、`p:bldLst`，包括 `mc:AlternateContent` 的 Choice/Fallback 子树；按本部件 `cNvPr` ID 域解析 shape target，记录可解析的形状名/key、悬空 ID 与歧义 ID。
-- 触发事件（如 `onClick`）、段落/字符范围、`mainSeq`/`interactiveSeq`，以及 motion、media、command 和无法解释的高级特性。
-- 转场单独记录类型、时长、自动翻页、Morph 和声音标记，不把转场当作对象时序。
-
-这是静态 XML 清单，不代表实际播放已验证。阶段一只登记风险和语义指纹输入，不在发现悬空目标时自动清理整页。悬空目标、未知高级时序、共享层继承、段落构建和 Morph 风险必须进入前置动效计划；由 `auto`、`preserve` 或 `strip` 决定是否允许后续编辑。
-
-若使用模板母页或模板填充，manifest/map 顶层可写 `animation_policy`，每个输出页可写同名覆盖，取值为 `auto`、`preserve`、`strip`。CLI 的 `--animation-policy` 覆盖全局默认，但逐页覆盖仍优先。需要先审阅计划时使用 `--animation-plan-only`；它只输出编辑前计划，不调用 OfficeCLI。
+阶段一只读分析，不自动清理动画；inventory 不证明实际播放。后续 map/manifest 的策略、编辑前计划和最终核对统一按 template-animation 执行。
 
 ## 4. 充分性检查（信息缺口门）
 

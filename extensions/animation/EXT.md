@@ -13,8 +13,8 @@ python extensions/animation/apply_animation.py 成品.pptx --deck deck.json --ou
 
 ## 默认方案
 
-- 转场：第 2 页起统一一种，克制为先；可选 `fade`、`push`、`wipe`、`cover`、`cut`、`morph`。`morph` 需要 PowerPoint 2019+，旧版本不支持，且只在上下页有同名/同位形状时才有意义。
-- 入场：只加在 `catalog` 与 `content` 页；`cover`、`section`、`close` 不加。可选 `fade`、修正为标准 PowerPoint XML 的 `wipe`、最轻量的 `appear`。
+- 转场：第 2 页起统一一种，克制为先；可选 `fade`、`push`、`wipe`、`cover`、`cut`、`morph`。`morph` 需要 PowerPoint 2019+，较早 PowerPoint 版本不支持，且只在上下页有同名/同位形状时才有意义。
+- 入场：只加在 `catalog` 与 `content` 页；`cover`、`section`、`close` 不加。可选 `fade`、标准 PowerPoint XML 的 `wipe`、最轻量的 `appear`。
 - 分组：内容区（标题线之下、页脚之上）的顶层形状按垂直位置聚成"行"，行数向 deck.json 里该页 block 数靠拢。每行一次点击：第一个形状 `clickEffect`，其余形状 `withEffect`，所以一页有几个 block 就点几次。组合形状整体做动画，不对组合内子形状单独加。
 - 跳过名字以 `DECO_` 开头的装饰形状；标题、页脚等内容区之外的形状始终可见。
 
@@ -29,7 +29,7 @@ python extensions/animation/apply_animation.py 成品.pptx --deck deck.json --ou
 
 - 模板输入和模板生成必须先运行 `analyze_template.py` 的动画 inventory；它会分别检查 slide、slideLayout、slideMaster 和所有 `mc:AlternateContent` 分支。模板已有动画按 `references/template-animation.md` 先形成 `auto|preserve|strip` 计划，不能等 PowerPoint 打开后再补救。
 - 动画由形状 id 引用，必须在 `formula.py`（它会删除占位框、新增公式形状）和几何装饰**之后**运行；此后再用 officecli 或其他工具增删形状，会让动画目标失效，需要重新生成动效计划并重跑本脚本。
-- 只做点击触发的入场；不支持自动播放、退出、强调和动作路径效果。模板已有动作路径、媒体、命令、交互触发或段落构建在编辑时由动画策略处理；`preserve` 无法证明时提前失败，`auto` 保守静态化，不能盲目复制旧目标。
+- 只做点击触发的入场；不支持自动播放、退出、强调和动作路径效果。模板已有动作路径、媒体、命令、交互触发或段落构建在编辑时由动画策略处理；`preserve` 无法证明时提前失败，`auto` 保守静态化，不能盲目复制模板目标。
 - 模板模式的页面形状布局不由本仓库控制，内容区按页高比例判断，必要时调整 `CONTENT_TOP_FRAC` / `CONTENT_BOTTOM_FRAC`。
 - 同一页里若形状外框纵向重叠，会被并入同一行（同一次点击）。
 - 新增动效必须另做目标/点击计划；它不继承模板动画的语义指纹。`--com-check` 或 PowerPoint 放映检查另行记录。
