@@ -7,8 +7,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from power_pptx import Presentation
 from power_pptx.util import Inches, Pt
 from power_pptx.oxml.xmlchemy import OxmlElement
-from validate_pptx import (bbox, check_slide, collect_baseline, estimate_text_height,
-                           overlap_key, positioned_shapes)
+from validate_pptx import (audited_template_page, bbox, check_slide, collect_baseline,
+                           estimate_text_height, overlap_key, positioned_shapes)
 
 
 class TemplateTextTests(unittest.TestCase):
@@ -106,6 +106,98 @@ class TemplateTextTests(unittest.TestCase):
         baseline = collect_baseline(self.prs)
         a.text_frame.paragraphs[0].runs[0].text = "新的标签"
         self.assertTrue(any("形状重叠" in error for error in self.issues(baseline)))
+
+    def audited_check(self, output):
+        context, baseline = audited_template_page(self.slide, output, 13.3333, 7.5)
+        hard, soft, info = [], [], []
+        check_slide(output, 1, context, hard, soft, 13.3333, 7.5, baseline, info)
+        return hard, info
+
+    def cloned(self):
+        from slide_clone import clone_slide
+        return clone_slide(self.prs, self.slide)
+
+    def test_only_unchanged_source_overflow_is_info(self):
+        self.textbox(self.slide.shapes, '原样艺术字', w=.3, h=.2, size=44)
+        output = self.cloned()
+        hard, info = self.audited_check(output)
+        self.assertFalse(hard)
+        self.assertTrue(any('文本框溢出' in item for item in info))
+        output.shapes[0].text = '新增正文必须失败'
+        hard, _ = self.audited_check(output)
+        self.assertTrue(any('文本框溢出' in item for item in hard))
+
+    def test_one_changed_collision_member_stays_hard(self):
+        self.textbox(self.slide.shapes, '原有标签', x=1, y=1, w=2, h=1, size=18)
+        self.textbox(self.slide.shapes, '原有正文', x=1.3, y=1.1, w=2, h=1, size=18)
+        output = self.cloned()
+        self.assertFalse(self.audited_check(output)[0])
+        output.shapes[0].text_frame.paragraphs[0].runs[0].text = '新的标签'
+        self.assertTrue(any('形状重叠' in item for item in self.audited_check(output)[0]))
+
+    def test_style_change_invalidates_existing_overflow(self):
+        self.textbox(self.slide.shapes, '相同文字', w=.3, h=.2, size=44)
+        output = self.cloned()
+        output.shapes[0].text_frame.paragraphs[0].runs[0].font.size = Pt(50)
+        self.assertTrue(any('文本框溢出' in item for item in self.audited_check(output)[0]))
+
+    def test_added_oob_and_zero_size_stay_hard(self):
+        self.textbox(self.slide.shapes, '原有越界', x=14, h=1)
+        output = self.cloned()
+        self.assertFalse(self.audited_check(output)[0])
+        self.textbox(output.shapes, '新增越界', x=14, y=4, h=1)
+        self.textbox(output.shapes, '新增零尺寸', x=3, y=4, w=0, h=0)
+        hard, _ = self.audited_check(output)
+        self.assertTrue(any('元素越界' in item for item in hard))
+        self.assertTrue(any('零尺寸' in item for item in hard))
+
+    def test_source_page_does_not_exempt_another_page(self):
+        self.textbox(self.slide.shapes, '原样艺术字', w=.3, h=.2, size=44)
+        output = self.cloned()
+        other = self.prs.slides.add_slide(self.prs.slide_layouts[6])
+        context, baseline = audited_template_page(other, output, 13.3333, 7.5)
+        hard = []
+        check_slide(output, 1, context, hard, [], 13.3333, 7.5, baseline, [])
+        self.assertTrue(any('文本框溢出' in item for item in hard))
+
+    def test_cli_requires_source_map_and_rejects_changed_text(self):
+        import contextlib
+        import io
+        import json
+        import tempfile
+        from unittest.mock import patch
+        import validate_pptx
+        self.textbox(self.slide.shapes, '原样艺术字', w=.3, h=.2, size=44)
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            template, output, mapping = root/'template.pptx', root/'output.pptx', root/'map.json'
+            self.prs.save(template)
+            self.prs.save(output)
+            mapping.write_text(json.dumps({'slides': [{'template_slide': 1}]}))
+            argv = ['validate_pptx.py', str(output), '--baseline', str(template)]
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                with patch.object(sys, 'argv', argv):
+                    self.assertEqual(validate_pptx.main(), 2)
+                with patch.object(sys, 'argv', argv + ['--baseline-map', str(mapping)]):
+                    self.assertEqual(validate_pptx.main(), 0)
+                changed = Presentation(output)
+                changed.slides[0].shapes[0].text = '新增文字'
+                changed.save(output)
+                with patch.object(sys, 'argv', argv + ['--baseline-map', str(mapping)]):
+                    self.assertEqual(validate_pptx.main(), 1)
+
+    def test_mixed_run_width_and_single_glyph_height(self):
+        from validate_pptx import paragraph_width
+        shape = self.textbox(self.slide.shapes, 'A', w=3, h=1, size=40)
+        run = shape.text_frame.paragraphs[0].add_run()
+        run.text = 'small'; run.font.size = Pt(10)
+        mixed = paragraph_width(shape.text_frame.paragraphs[0], 'Asmall')
+        run.font.size = Pt(40)
+        self.assertLess(mixed, paragraph_width(shape.text_frame.paragraphs[0], 'Asmall'))
+        shape.text = '可'
+        shape.text_frame.paragraphs[0].runs[0].font.size = Pt(100)
+        self.assertAlmostEqual(estimate_text_height(shape.text_frame, .1),
+                               estimate_text_height(shape.text_frame, 3))
 
 
 if __name__ == "__main__":

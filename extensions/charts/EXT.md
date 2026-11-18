@@ -5,18 +5,18 @@
 ## 使用规则
 
 - 无模板的两个完全自主模式优先使用 `power_pptx` 创建 PowerPoint 原生图表，保留后续编辑能力。
-- 完全遵循模板和半自主模式使用 OfficeCLI 管理模板页：保留模板已有图表；`template_fill.py` 可将顶层图片位或已有图表位同位替换为 native chart。任意坐标新增图表需另写明确的 OfficeCLI 操作，当前 map 不支持。配色优先继承模板实际可见颜色；先核对主题色与可见颜色是否一致，不能只因名为 `accent1` 就直接采用。
-- OfficeCLI 的模板图表操作应放在一次 `batch` 中；复制页、删除原图片、添加 chart 和设置位置任一步失败，整批回滚，不保留半成品。
+- strict 保留模板已有图表；显式 custom 模式的 `template_fill.py` 可将顶层图片位或已有图表位同位替换为 native chart。半自主 canvas 复用核心渲染器，支持 chart、figure 和 formula block，并按安全区原生坐标绘制。任意坐标新增图表需另写明确的 OfficeCLI 操作，当前 map 不支持。配色优先继承模板实际可见颜色；先核对主题色与可见颜色是否一致，不能只因名为 `accent1` 就直接采用。
+- 包级克隆先准备独立页；OfficeCLI 的删除原图片、添加 chart 和设置位置在一次原子 batch 中完成。任一步或最终校验失败，暂存输出不发布。
 - 图表类型不受原生支持，或 Office 兼容性不稳定时，使用 `fallback: "svg"`。SVG 兜底依赖 `matplotlib` 与 `cairosvg`，列于 `requirements-optional.txt`，由 `requirements.txt` 汇总。
 - 完全自主渲染器的 `fallback` 可写 `auto`（默认，原生失败时转 SVG）、`native`（强制原生）或 `svg`（强制 SVG）。模板脚本当前只生成 native chart，不实现自动 SVG 回退；需要图片回退时生成 SVG/PNG，再通过 `fields.image` 替换顶层图片位，并记录可编辑性限制。模板输出必须确认 chart 对象实际存在，失败不得静默通过。
 - 单个测量值没有比较关系，不生成柱状图、折线图或竞品比较图；改用 `stats`/`lead`，或补齐同口径、可比较的类别。`deck_check.py` 和 `template_fill.py` 都会在只有一个 category 时阻断图表。
-- 每个图表必须提供 `source`、`table_view` 或 `accessibility_note` 至少一项，说明数据来源、口径、时间范围或读图方式；多系列图表尤其不能省略。
+- 图表数据与来源字段的契约见 [schema](../../references/deck-schema.md#chart)。
 - 禁止使用 `secondary_axis`。需要双轴时改用同一坐标口径、拆成两个图表，或改用文字说明。
 - OfficeCLI 当前最稳的是同尺寸新增 chart。模板已有原生图表需要改变系列结构或类型时，先核对上文的同位原生替换范围；不支持的变化使用明确的 SVG/PNG 图片替换流程，并在校验报告记录可编辑性限制。复杂嵌套 group 内的图片位不能直接 `add --from` 为页面根部 chart，应复制整组或选择顶层图片位。
 
 ## OfficeCLI 模板图表参数
 
-模板模式的 `template_fill.py` 将 map 中的 chart 对象转换为 OfficeCLI 的 `add --type chart`，使用这些属性：
+custom 模式的 `template_fill.py` 将 map 中的 chart 对象转换为 OfficeCLI 的 `add --type chart`，使用这些属性：
 
 ```text
 chartType    column / stackedColumn / bar / line / area / pie / doughnut / radar

@@ -14,7 +14,7 @@
 | --- | --- | --- | --- |
 | 完整 | 完整材料摘要、`STORY.md`、多个候选与确认 | 完整模板 inventory、逐页映射与确认 | 全部结构、版式、渲染和视觉检查 |
 | Quick | 普通六阶段流程，减少候选数量 | 普通 inventory 后按页填充 | 全部 Hard 检查，允许少量 Soft |
-| fast-lite | 一次事实清单、一个 seed、一个候选、直接生成 `deck.json` | 完全遵循：紧凑 inventory 后批量填充；半自主：紧凑 inventory、选择母页并批量复制组；完全自主：按无模板路径采样 | 结构 Hard 检查、PPTX 可重新打开、真实渲染和明显溢出 |
+| fast-lite | 一次事实清单、一个 seed、一个候选、直接生成 `deck.json` | 完全遵循：紧凑 inventory 后批量填充；半自主：三层 inventory、清理正文画布并注入自主布局；完全自主：按无模板路径采样 | 与完整模式相同的检查；目标应用不可用时如实记录未验证 |
 
 ## 无模板 fast-lite
 
@@ -26,13 +26,13 @@
    ```
 
    把 seed、候选序号、场景、页型序列、强制颜色和渲染器常量记录到 `style.json`，保证后续能够复现同一候选。
-3. 直接取唯一候选，复制渲染器三件套并生成 `deck.json`。不生成完整设计锁定文件，不比较多个候选。
+3. 直接取唯一候选，运行 `scripts/prepare_renderer.py 渲染器` 复制完整运行时，并生成 `deck.json`。不生成完整设计锁定文件，不比较多个候选。
 4. 按资料中的真实事实生成页面；随机性只能影响强调色、小范围字号与边距、同等版式候选的 tie-break，不得影响事实、数字、公式、图表数据、模板主题或用户指定颜色。
 5. 按顺序运行结构校验、渲染和输出校验：
 
    ```text
    <py> <渲染器>/deck_check.py deck.json
-   <py> <渲染器>/render_pptx.py --input deck.json --output <输出.pptx>
+   <py> <渲染器>/render_pptx.py --input deck.json --style style.json --output <输出.pptx>
    # deck 含 formula block 或 $...$ 时，在这里运行：
    <py> scripts/formula.py <输出.pptx>
    <py> scripts/validate_pptx.py <输出.pptx> --deck deck.json
@@ -43,14 +43,16 @@
 
 ## 有模板 fast-lite
 
-1. 复用一次紧凑 inventory，记录页数、尺寸、版式、占位符、标题、页脚、图片和图表位置；半自主再记录母页候选、顶层组合与清除 key。紧凑记录不能省略三层动画及 MC 分支，扫描职责见 [source-intake.md](source-intake.md)，策略、CLI 优先级与前置阻断见 [template-animation.md](template-animation.md)。
-2. 先运行 `template_mother.py` 或 `template_fill.py --animation-plan-only` 审阅计划；该模式只输出 stdout，不调用 OfficeCLI。
-3. 完全遵循建立 map 并批量填充；半自主先做母页清空检查，再用 clone_groups 扩展。复用同次 inventory，不重复分析每页。
+1. 复用一次紧凑 inventory，记录页数、尺寸、版式、占位符、标题、页脚、图片和图表位置；半自主再记录母页候选、正文区域与 slide/layout/master 三层保留和清除清单。紧凑记录不能省略三层动画及 MC 分支，扫描职责见 [source-intake.md](source-intake.md)，策略、CLI 优先级与前置阻断见 [template-animation.md](template-animation.md)。
+2. 完全遵循先运行 `scripts/template_fill.py --animation-plan-only` 审阅计划；半自主按 canvas 的固定清理行为审查三层动画，接口范围见 template-animation。
+3. 完全遵循建立 map 并批量填充；半自主先用 template_canvas.py 做三层母页清空检查，再注入自主正文布局。复用同次 inventory，不重复分析每页。
 4. 检查模板页数、占位符类型、映射覆盖率与输出页数。图表只按 [charts/EXT.md](../extensions/charts/EXT.md) 保留或同位替换；map 不支持任意坐标新增或自动 SVG 回退。失败不交付半成品。
 5. 运行：
 
    ```text
-   <py> scripts/validate_pptx.py <输出.pptx> --deck deck.json --baseline <模板.pptx>
+   # strict/custom 加 --baseline-map map.json；半自主结构页来源在 deck 中
+   <py> scripts/validate_pptx.py <输出.pptx> --deck deck.json --baseline <模板.pptx> --baseline-map map.json
+   # template_fill 和 template_canvas 输出的计划均须复核：
    <py> scripts/template_animation.py <输出.pptx> --plan <输出.pptx>.animation-plan.json
    ```
 

@@ -8,7 +8,7 @@
     --map map.json --output 输出.pptx --animation-plan-only
 ```
 
-`map.json` 和 `mothers.json` 可以写顶层 `animation_policy`，单页可以写 `animation_policy` 覆盖它；命令行 `--animation-policy auto|preserve|strip` 覆盖顶层默认值，逐页设置仍优先；未指定时默认 `auto`。`--animation-plan-only` 只做编辑前计划，不启动 OfficeCLI，不写输出 PPTX。
+`template_fill.py` 的 map 和 `template_mother.py` 的删除清单可以写顶层 `animation_policy`，单页可以写 `animation_policy` 覆盖它；命令行 `--animation-policy auto|preserve|strip` 覆盖顶层默认值，逐页设置仍优先；未指定时默认 `auto`。`--animation-plan-only` 只做编辑前计划，不启动 OfficeCLI，不写输出 PPTX。
 
 | 策略 | 编辑前行为 | 输出行为 |
 | --- | --- | --- |
@@ -32,3 +32,7 @@
 如果用户启用 `extensions/animation` 新增入场动效，必须在公式、图表和所有形状增删之后运行。它不是模板动画保留的证明：新增动效应生成自己的目标/点击计划并自检，不能拿新增效果与模板编辑前指纹比较来声称保留。`--com-check` 或 PowerPoint 放映检查另行记录；具体选项与范围见动效 EXT。
 
 最终按 [validation.md](validation.md) 分别记录结构、静态渲染、目标应用打开与实际放映，记录格式见 [playback-report.md](playback-report.md)。没有放映验证时明确写 `playback_verified=false`，不能用 XML、HTML/Pillow 或原生 PDF 替代。
+
+## 正文画布入口
+
+`template_canvas.py` 不接受 CLI animation_policy 或 --animation-plan-only。正文页按三层 inventory 隔离继承层并移除 timing 和 transition；选中 layout/master 含 timing 时阻断，须换页或在副本中独立完成审计清理。混合组装的结构页按原页 fields 建立适用的保留计划。canvas 同时输出 `.canvas-evidence.json` 和 `.animation-plan.json`，最终用上文 template_animation.py 命令复核；包检查使用 repair_animations=False，不替代已声明的清理。

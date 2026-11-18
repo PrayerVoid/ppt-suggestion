@@ -12,8 +12,8 @@
 }
 ```
 
-`source` 写入正文页脚注。无模板时画布 16:9；有模板时由模板决定。deck.json 里没有颜色、主题或样式字段：
-配色与基本版式在阶段三写进渲染器副本的顶部常量，不进 JSON。
+`source` 仅作内部制作溯源，不写入页面或讲稿。根对象、页面及 quote/chart block 的可见外部出处统一使用 `external_citation`，只填写论文、著作等真实外部引用，不填写输入文件名或制作过程。旧稿中需要显示的真实外部 `source` 须迁移到 `external_citation`。无模板时画布 16:9；有模板时由模板决定。deck.json 里没有颜色、主题或样式字段：
+配色与基本版式在阶段三写入独立的 `style.json`，通过 `render_pptx.py --style style.json` 注入，并核对输出 `.render.json`；不写进 deck.json。
 
 **通用要求**：条目说明必须有信息；具体字段按各 kind 定义，不是所有 items 都使用 body。密度和全稿节奏以 design 为准，机械检查的实际范围见 §4。示例只展示字段，不是完整可交付 deck；不得把示例数值或引文当作项目事实。
 
@@ -348,7 +348,7 @@ block 时必须设置。block 的占用高度取图片（含图注）与侧栏�
 {
   "kind": "figure",
   "src": "images/img2",
-  "caption": "图：ECIES 原理流程（参考资料）",
+  "caption": "图：ECIES 原理流程",
   "image_side": "left",
   "image_ratio": 0.5,
   "height": 4.3,
@@ -367,9 +367,9 @@ block 时必须设置。block 的占用高度取图片（含图注）与侧栏�
 ```json
 {
   "kind": "bignum",
-  "kicker": "资料中的关键指标",
+  "kicker": "关键指标",
   "value": "<原始数值及单位>",
-  "title": "资料支持的指标判断",
+  "title": "指标判断",
   "body": "填写资料来源、统计时间和比较口径。",
   "items": ["填写资料支持的指标含义", "填写适用范围与限制"]
 }
@@ -396,13 +396,13 @@ block 时必须设置。block 的占用高度取图片（含图注）与侧栏�
 
 ### quote
 
-只用于真正的引语或需要原样保留的观点。`source` 写说话者、文件或页码；没有来源时应改用 `lead`、`insight` 或普通结构 block。
+只用于真正的引语或需要原样保留的观点。`external_citation` 写真实外部引文的说话者、著作或页码；没有来源时应改用 `lead`、`insight` 或普通结构 block。
 
 ```json
 {
   "kind": "quote",
   "text": "<需要原样保留的资料原文>",
-  "source": "<说话者或文件名及页码>"
+  "external_citation": "<外部说话者或著作及页码>"
 }
 ```
 
@@ -451,7 +451,7 @@ block 时必须设置。block 的占用高度取图片（含图注）与侧栏�
 ```json
 {
   "kind": "chart",
-  "title": "来自资料的图表标题",
+  "title": "图表结论标题",
   "chart_type": "column_clustered",
   "categories": ["分类一", "分类二"],
   "series": [{ "name": "系列名称", "values": ["<来自资料的数值一>", "<来自资料的数值二>"] }],
@@ -470,16 +470,18 @@ block 时必须设置。block 的占用高度取图片（含图注）与侧栏�
 
 本节描述脚本实际阻断的条件；视觉、密度和页面节奏的完整规范在 design。脚本通过仍需人工复核，句式与文风只由 humanize 检查。
 
+根对象默认 `notes_enabled: true`；每页写 `notes` 字符串，三种生成模式都会写入该页原生 `notesSlide`。正式内容规划应编写可口述的讲稿；遗漏时默认摘录本页标题、副标题和正文作为兜底，报告中应明确摘录不等于完整讲稿。模板旧备注保存在 `【模板原备注（供参考）】` 区，本次讲稿位于 `【本次讲稿】` 区；重复生成不累积重复块。明确不需要讲稿时设置 `notes_enabled: false`，此时不改已有模板备注。
+
 | 范围 | 实际检查 |
 |---|---|
 | 全部模式 | slides 非空，页面 type 合法，标题及相应 blocks 必填；正文标题至少 8 字；catalog 与 section 双向对应、数量和标题一致 |
-| 全部模式的 block | kind 合法，block 不携带 color/fontSize/hex；formula.latex 非空；文本 `$` 成对且不是空公式 `$$`，字面美元符号用 `\$` |
+| 全部模式的 block | kind 合法，block 不携带 color/fontSize/hex；按 26 种版式容量元数据检查条目数量、单条长度和最小正文；formula.latex 非空；文本 `$` 成对且不是空公式 `$$`，字面美元符号用 `\$` |
 | 全部模式的图表 | chart_type/fallback 合法、系列非空且名称唯一、数值有限、分类与系列长度一致；分类图表不允许单类别；饼/环图非负且至少一个正值，散点字段完整、气泡 size 为正；source/table_view/accessibility_note 至少一项，禁止 secondary_axis |
 | 完全自主正文 | collect_text 收集的 block 文本合计至少 110 字符（不计页面标题，不等于纯汉字数）；存在的 items[].body 至少 10 字；不能仅有 lead/insight/chips |
 | 完全自主全稿 | cards/columns 合计最多 2 页，不能连续；正文至少 5 种 kind（lead/insight/chips 不计）；至少出现一种结构 kind（layers/steps/rows/pipeline/hub/timeline/compare） |
 | 模板 `--template-mode` | 跳过上述完全自主正文/全稿项；仍检查其余结构、字段、图表和公式条件 |
 
-规划要求的至少 2 页结构页、40% 非对称/结构、insight 数量、bignum 页数以及条目语义需按 design 人工检查。deck_check 不检查所有 kind 的条目容量；容量由各渲染函数及模板容量门禁处理，不能把未知字段或超量条目视为有效能力。
+规划要求的至少 2 页结构页、40% 非对称/结构、insight 数量、bignum 页数以及条目语义需按 design 人工检查。自主模式的 deck_check 使用 layout_capacity 对 26 个核心 kind 检查条目上限与保守字符预算；扩展 kind 仍需按扩展规则检查，实际布局仍须渲染复核。模板模式按原槽位字号与显示尺寸执行容量门禁，不能把未知字段或超量条目视为有效能力。
 
 特殊排版仅用 `--extra-kinds diagonal,radial,ring,concentric` 放行，且须按其 EXT 注册渲染函数；26 个核心 kind 无需该参数。快速模式使用同一校验入口，不跳过完全自主门槛。
 
@@ -505,3 +507,8 @@ block 时必须设置。block 的占用高度取图片（含图注）与侧栏�
 | 第 N 页 chart 缺少来源说明 | 补 `source`、`table_view` 或 `accessibility_note`，说明数据来源、口径或读图方式 |
 | 第 N 页 chart 使用 `secondary_axis` | 删除该字段，改用同一坐标口径、拆分图表或文字说明 |
 | 第 N 页 … 的 $ 数量为奇数 / 含空的行内公式 $$ | 补全 `$...$`；字面美元符号写成 `\$`  |
+
+
+## 模板重构契约
+
+模板密度证据：新稿逐页显式 notes、source 和 items(title/body)，记录 body_characters、expected_slots、effective_slots、slot_coverage 与内容覆盖。expected_slots 必须来自原页实际语义槽位。每个槽位写真实材料的机制、论据、条件或边界；来源不足则换页或拆页。数字计数不能证明语义充分，必须人工核对材料映射。半自主 canvas 的字段与 EMU 区域契约见 template-semi-autonomous；不使用旧自主渲染器 kind 字段作为替代。

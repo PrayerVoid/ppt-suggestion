@@ -10,24 +10,9 @@
 
 支持四种风格模式：完全遵循模板、半自主、完全自主（默认白底极简）、完全自主（用户指定其它风格）。前两种继承模板主题与母版，后两种使用采样器提供候选并按内容调整。核心提供 26 个 kind；特殊排版扩展另提供 4 个 kind。图表能力默认可用，仅在有真实数据关系时生成；动效、几何装饰和特殊排版须启用，几何底纹还需单独明确允许。
 
-## 文档职责与入口
+## 文档入口
 
-| 文档 | 负责内容 |
-|---|---|
-| [SKILL.md](SKILL.md) | 工作流总控、阶段顺序、用户选择、门禁与执行导航 |
-| [source-intake.md](references/source-intake.md) | 资料读取、事实摘录、领域判断、模板分析与缺口清单 |
-| [story.md](references/story.md) | 信息层级、叙事骨架、逐页意图与 STORY 结构 |
-| [humanize.md](references/humanize.md) | 全部文案的语言规则与人工自查 |
-| [design.md](references/design.md) | 视觉、字体、密度、页面节奏与采样职责 |
-| [layout-types.md](references/layout-types.md) | 核心/特殊版式选型、页面与图片构图、能力边界 |
-| [deck-schema.md](references/deck-schema.md) | deck 字段、block 容量、渲染前机械检查与报错解释 |
-| [template-inherit.md](references/template-inherit.md) | 完全遵循模板、map 格式与 OfficeCLI 编辑边界 |
-| [template-semi-autonomous.md](references/template-semi-autonomous.md) | 半自主母页清空、manifest 与组合复制扩展 |
-| [template-animation.md](references/template-animation.md) | 模板动画 inventory、策略、前置计划与语义核对 |
-| [fast-mode.md](references/fast-mode.md) | 完整 / Quick / fast-lite 的执行差异 |
-| [extensions/README.md](extensions/README.md) | 图表及可选扩展的入口和执行顺序 |
-| [validation.md](references/validation.md) | 最终 Hard/Soft 检查、预览、修复闭环与验证限制 |
-| [playback-report.md](references/playback-report.md) | 结构、静态渲染、目标应用打开和实际放映的证据记录 |
+[SKILL.md 的规则导航](SKILL.md#规则导航)列出每项规则的唯一维护位置。README 负责安装、入门命令与维护检查；接口和工作流规则通过导航查阅。
 
 ## 安装
 
@@ -63,24 +48,24 @@ python scripts/sample_style.py --seed 7 --count 3 --scene 工程 --pages 12
 python scripts/sample_style.py --seed 7 --emit-constants 0
 ```
 
-将 `scripts/render_pptx.py`、`scripts/text_measure.py`、`scripts/deck_check.py` 复制到结果目录的 `渲染器/`，把选中候选常量写入副本，并保存完整 palette、base 与采样参数到 `style.json`。候选 ID 从 0 开始；按 schema 写好 `deck.json` 后运行：
+运行 `python scripts/prepare_renderer.py 渲染器`，复制完整的六模块运行时（render_pptx、text_measure、deck_check、layout_capacity、speaker_notes、pptx_package）。工具默认拒绝覆盖已有定制代码，审阅差异后才使用 `--force`。保存完整 palette、base 与采样参数到 `style.json`，渲染时通过 `--style style.json` 注入。候选 ID 从 0 开始；按 schema 写好 `deck.json` 后运行：
 
 ```bash
 python 渲染器/deck_check.py deck.json
-python 渲染器/render_pptx.py --input deck.json --output 汇报.pptx
+python 渲染器/render_pptx.py --input deck.json --style style.json --output 汇报.pptx
 # 有 formula block 或 $...$ 行内公式时执行
 python scripts/formula.py 汇报.pptx
 python scripts/validate_pptx.py 汇报.pptx --deck deck.json
 python scripts/render_preview.py 汇报.pptx -o /tmp/ppt_preview --sheet
 ```
 
-模板路径先运行 `python scripts/analyze_template.py 模板.pptx -o 模板摘要.md --slides-json`，然后按模板继承或半自主文档生成 map/manifest；不运行配色采样。图表字段见 schema，模板图表操作边界见 [charts/EXT.md](extensions/charts/EXT.md)。模板输出的动画计划在所有后处理之后复核。公式、预览引擎与目标应用的限制统一见 validation。
+模板路径先运行 `python scripts/analyze_template.py 模板.pptx -o 模板摘要.md`，另运行 `python scripts/analyze_template.py 模板.pptx --slides-json > 模板清单.json`，然后按模板继承或半自主文档生成 map/manifest；不运行配色采样。图表字段见 schema，模板图表操作边界见 [charts/EXT.md](extensions/charts/EXT.md)。模板输出的动画计划在所有后处理之后复核。公式、预览引擎与目标应用的限制统一见 validation。
 
 默认工作目录为 `ppt-suggestion 的结果/`；中间文件保留在此，交付 `.pptx` 的绝对路径，并如实说明资料缺口、图片图表回退和未验证项。
 
 ## 维护与验证
 
-文档规则在上表对应文件维护，跨文档用导航引用。无模板视觉参数集中在渲染器顶部常量；项目定制改渲染器副本，JSON 不携带视觉字段。调整采样分布改 `scripts/sample_style.py` 的权重；文案句式由 humanize 人工检查，不放入结构校验脚本。
+文档规则在 SKILL 导航对应文件维护，跨文档用导航引用。无模板视觉参数通过 style.json 注入渲染器，默认常量位于渲染器顶部；项目定制改渲染器副本，JSON 不携带视觉字段。调整采样分布改 `scripts/sample_style.py` 的权重；文案句式由 humanize 人工检查，不放入结构校验脚本。
 
 添加版式时实现并注册 `BLOCK_RENDERERS`，在 schema 登记字段，更新选型、校验 kind 名单及适用测试；副本扩展通过 `--extra-kinds` 放行。添加扩展时提供 `extensions/<名>/EXT.md` 并登记扩展索引。稳定脚本入口保留在 `scripts/`。
 

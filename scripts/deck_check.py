@@ -9,7 +9,8 @@ Usage:
 
 --extra-kinds 放行渲染器副本里新增的 block kind（如特殊版式拓展）。
 --template-mode 模板模式：版式由模板决定，跳过字数、版式种类、相邻页等版式类检查，
-                仅保留结构合法性、字段与行内公式 `$` 配对检查。
+                保留结构、字段、图表与行内公式检查；也接受无 type/blocks 的模板语义页，
+                检查 title/items(title,body)/source/notes，具体容量由模板生成器负责。
 
 Exit codes:
   0 valid
@@ -25,6 +26,8 @@ import math
 import re
 import sys
 from pathlib import Path
+
+from layout_capacity import check_deck
 
 BUILTIN_KINDS = {
     "agenda", "chart", "figure", "lead", "insight", "stats", "columns", "steps", "chips",
@@ -118,6 +121,7 @@ def _check_chart(block, slide_no):
     if len(names) != len(set(names)):
         errs.append(f"第 {slide_no} 页 chart 的 series name 必须唯一")
     has_context = (str(block.get("source", "")).strip()
+                   or str(block.get("external_citation", "")).strip()
                    or bool(block.get("table_view"))
                    or bool(str(block.get("accessibility_note", "")).strip()))
     if not has_context:
@@ -214,10 +218,40 @@ def validate_deck(deck: dict, extra_kinds=(), template_mode=False) -> list:
     if not isinstance(slides, list) or not slides:
         return ["slides 为空或缺失"]
     errs += _check_inline_math(slides)
+    if not template_mode:
+        errs += check_deck(deck)
+    notes_enabled = deck.get("notes_enabled", True)
+    if not isinstance(notes_enabled, bool):
+        errs.append("notes_enabled 必须是布尔值")
+    for idx, slide in enumerate(slides, 1):
+        if isinstance(slide, dict) and notes_enabled and slide.get("notes") is not None and not isinstance(slide.get("notes"), str):
+            errs.append(f"第 {idx} 页 notes 必须是字符串；如需关闭讲稿请设置 notes_enabled=false")
     types = []
     for idx, slide in enumerate(slides, start=1):
         if not isinstance(slide, dict):
             errs.append(f"第 {idx} 页必须是对象")
+            continue
+        # Template generators also accept semantic pages without autonomous
+        # blocks. Structural strict pages may intentionally have no items: their
+        # audited geometry carries the visible content, while title/source/notes
+        # remain the semantic evidence required by the template gate.
+        if template_mode and 'type' not in slide:
+            types.append('content')
+            title = slide.get('title')
+            if not isinstance(title, str) or len(title.strip()) < 8:
+                errs.append(f'第 {idx} 页模板标题须为至少 8 字的结论句')
+            if not isinstance(slide.get('source'), str) or not slide['source'].strip():
+                errs.append(f'第 {idx} 页模板语义内容缺少 source')
+            if notes_enabled and (not isinstance(slide.get('notes'), str) or not slide['notes'].strip()):
+                errs.append(f'第 {idx} 页模板语义内容须显式提供 notes')
+            if 'items' in slide:
+                items = slide['items']
+                if not isinstance(items, list) or not items:
+                    errs.append(f'第 {idx} 页模板 items 须为非空数组')
+                else:
+                    for n, item in enumerate(items, 1):
+                        if not isinstance(item, dict) or any(not isinstance(item.get(k), str) or not item[k].strip() for k in ('title','body')):
+                            errs.append(f'第 {idx} 页模板 items[{n}] 须有非空 title/body')
             continue
         page_type = str(slide.get("type", "")).strip().lower()
         types.append(page_type)

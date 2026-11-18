@@ -4,8 +4,8 @@
 Checks per slide: shape overlap, out-of-bounds, estimated text overflow,
 empty shapes, image distortion / low resolution, unconverted inline `$...$`
 formulas, layout repetition, and (optionally, with --deck) slide count and
-per-slide block signature. With --baseline (template mode) out-of-bounds shapes
-that the template itself already has are reported as Info, not Hard.
+per-slide block signature. --baseline plus a source-page map audits unchanged
+objects against their original page; only their existing findings become Info.
 
 Usage:
   python validate_pptx.py <out.pptx> [--deck deck.json] [--baseline template.pptx] [--strict]
@@ -160,11 +160,42 @@ def paragraph_size(paragraph):
     return max(float(value) / 100 for value in sizes) if sizes else 14.0
 
 
+def paragraph_glyphs(paragraph):
+    """Yield character, point size and tracking with each run's own properties."""
+    defaults = paragraph._p.find(f'{A_NS}pPr/{A_NS}defRPr')
+    ending = paragraph._p.find(f'{A_NS}endParaRPr')
+    def inherited(name, fallback):
+        for node in (defaults, ending):
+            if node is not None and node.get(name) is not None:
+                return float(node.get(name)) / 100
+        return fallback
+    base_size = inherited('sz', 14.0)
+    base_spacing = inherited('spc', 0.0)
+    for child in paragraph._p:
+        if child.tag == f'{A_NS}br':
+            yield '\n', base_size, 0.0
+        elif child.tag in (f'{A_NS}r', f'{A_NS}fld'):
+            props = child.find(f'{A_NS}rPr')
+            size = float(props.get('sz')) / 100 if props is not None and props.get('sz') else base_size
+            spacing = float(props.get('spc')) / 100 if props is not None and props.get('spc') else base_spacing
+            for text in child.findall(f'{A_NS}t'):
+                for char in (text.text or '').replace('\v', '\n'):
+                    yield char, size, spacing
+
+
+def _glyph_width(glyph, last=False):
+    char, size, spacing = glyph
+    return max(0, estimate_width(char, size) + (0 if last else spacing / 72))
+
+
 def paragraph_width(paragraph, text):
-    tracking = [float(value) / 100 for value in paragraph._p.xpath(
-        './a:pPr/a:defRPr/@spc | .//a:rPr/@spc')]
-    spacing = max(tracking, default=0)
-    return estimate_width(text, paragraph_size(paragraph)) + max(0, len(text) - 1) * spacing / 72
+    glyphs = list(paragraph_glyphs(paragraph))
+    content = ''.join(g[0] for g in glyphs)
+    start = content.find(text)
+    if start < 0:
+        return estimate_width(text, paragraph_size(paragraph))
+    selected = glyphs[start:start + len(text)]
+    return sum(_glyph_width(g, i == len(selected) - 1) for i, g in enumerate(selected))
 
 
 def estimate_text_height(tf, width_in: float) -> float:
@@ -173,13 +204,23 @@ def estimate_text_height(tf, width_in: float) -> float:
     inner_width = max(0.01, width_in - _inches(tf.margin_left) - _inches(tf.margin_right))
     total = _inches(tf.margin_top) + _inches(tf.margin_bottom)
     for paragraph in tf.paragraphs:
-        size = paragraph_size(paragraph)
-        text = paragraph.text.replace("\v", "\n")
-        lines = sum(max(1, math.ceil(paragraph_width(paragraph, line) / inner_width))
-                    for line in text.split("\n")) if tf.word_wrap is not False else len(text.split("\n"))
+        lines, current, advance = [], [], 0.0
+        glyphs = list(paragraph_glyphs(paragraph))
+        for i, glyph in enumerate(glyphs):
+            if glyph[0] == '\n':
+                lines.append(current); current = []; advance = 0.0
+                continue
+            width = _glyph_width(glyph, i + 1 == len(glyphs) or glyphs[i + 1][0] == '\n')
+            # A single glyph occupies one line even when its advance exceeds the
+            # box. It cannot be split into two fictitious lines by ceil(width/box).
+            if tf.word_wrap is not False and current and advance + width > inner_width + 1e-9:
+                lines.append(current); current = []; advance = 0.0
+            current.append(glyph); advance += width
+        lines.append(current)
         ls = paragraph.line_spacing
-        line_height = ls.pt / 72 if hasattr(ls, "pt") else size * 1.22 * (ls or 1.0) / 72
-        total += lines * line_height
+        for line in lines:
+            size = max((g[1] for g in line), default=paragraph_size(paragraph))
+            total += ls.pt / 72 if hasattr(ls, 'pt') else size * 1.22 * (ls or 1.0) / 72
         total += _inches(paragraph.space_before) + _inches(paragraph.space_after)
     return total
 
@@ -282,16 +323,51 @@ def collect_baseline(prs):
     return frozenset(seen)
 
 
+def audited_template_page(source, output, page_w, page_h, deck_slide=None):
+    """Authorize only unchanged objects at the same source-page shape path."""
+    def signature(shape):
+        # Prefix spelling and relationship IDs change on clone. Compare expanded
+        # XML names, formatting, text and actual referenced payloads instead.
+        relationships = shape.part.rels
+        def node_key(node):
+            attrs = []
+            for name, value in node.attrib.items():
+                if name.startswith('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'):
+                    rel = relationships.get(value)
+                    if rel is not None:
+                        import hashlib
+                        value = (rel.reltype, rel.target_ref if rel.is_external else
+                                 hashlib.sha256(rel.target_part.blob).hexdigest())
+                attrs.append((name, value))
+            return (node.tag, tuple(sorted(attrs)), node.text or '',
+                    tuple(node_key(child) for child in node
+                          if child.tag.rsplit('}', 1)[-1] not in {'creationId', 'modId'}
+                          and not (child.tag.rsplit('}', 1)[-1] in {'pPr', 'rPr'}
+                                   and not child.attrib and not len(child) and not child.text)))
+        return (tuple(bbox(shape)), node_key(shape._element))
+    original = {sh.path: signature(sh) for sh in positioned_shapes(source.shapes)}
+    unchanged = {sh.path for sh in positioned_shapes(output.shapes)
+                 if original.get(sh.path) == signature(sh)}
+    context = dict(deck_slide or {})
+    context['_baseline_shapes'] = unchanged
+    # A source-page baseline, never the union of all template pages.
+    keys = set()
+    check_slide(source, 0, None, [], [], page_w, page_h, seen=keys)
+    return context, frozenset(keys)
+
+
 def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h,
                 baseline=frozenset(), infos=None, seen=None, check_formulas=True):
     shapes = list(positioned_shapes(slide.shapes))
     visible = [sh for sh in shapes if has_visible_fill(sh) or has_text(sh)]
 
-    def report(key, msg):
-        """越界 / 重叠：键在 baseline（模板自带）里就降为说明项。"""
+    def report(key, msg, *members):
+        """Only identical audited source objects may inherit an existing issue."""
         if seen is not None:
             seen.add(key)
-        if infos is not None and key in baseline:
+        unchanged = (deck_slide or {}).get('_baseline_shapes', set())
+        audited = bool(members) and all(sh.path in unchanged for sh in members)
+        if infos is not None and key in baseline and audited:
             infos.append(msg)
         else:
             issues.append(msg)
@@ -326,7 +402,7 @@ def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h,
             if inter / small > 0.28:
                 report(overlap_key(a, b),
                        f"第 {sidx} 页: 形状重叠 ({_n(inter)} in²) 于 "
-                       f"({_n(oa[0])}, {_n(oa[1])}) 与 ({_n(ob[0])}, {_n(ob[1])})")
+                       f"({_n(oa[0])}, {_n(oa[1])}) 与 ({_n(ob[0])}, {_n(ob[1])})", a, b)
 
     # 2) out of bounds（模板自带的越界形状只作说明，不算 Hard）
     for sh in shapes:
@@ -336,7 +412,7 @@ def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h,
         txt = sh.text_frame.text[:14] if has_text(sh) else sh.name
         report(("oob", oob_key(sh)),
                f"第 {sidx} 页: 元素越界「{txt}」({_n(x + w)}, {_n(y + h)}) 超出页面 "
-               f"({_n(page_w)} × {_n(page_h)})")
+               f"({_n(page_w)} × {_n(page_h)})", sh)
 
     # 2b) native chart GraphicFrame
     for sh in shapes:
@@ -421,11 +497,15 @@ def check_slide(slide, sidx, deck_slide, issues, warnings, page_w, page_h,
                 widest = max((paragraph_width(p, line) for p in tf.paragraphs
                               for line in p.text.replace("\v", "\n").split("\n")), default=0)
                 if widest > inner_width + 0.04:
-                    issues.append(f"第 {sidx} 页: 不换行文字横向溢出「{tf.text[:16]}」"
-                                  f"文字宽 {_n(widest)} in > 可用宽 {_n(inner_width)} in")
+                    report(("nowrap", sh.name, round(x, 3), round(y, 3),
+                            round(w, 3), round(h, 3), tf.text),
+                           f"第 {sidx} 页: 不换行文字横向溢出「{tf.text[:16]}」"
+                           f"文字宽 {_n(widest)} in > 可用宽 {_n(inner_width)} in", sh)
             if need > h + max(0.04, h * 0.10):
-                issues.append(f"第 {sidx} 页: 文本框溢出「{tf.text[:16]}…」"
-                              f"估算 {_n(need)} in > 框高 {_n(h)} in（{sh.path}）")
+                report(("overflow", sh.name, round(x, 3), round(y, 3),
+                        round(w, 3), round(h, 3), tf.text),
+                       f"第 {sidx} 页: 文本框溢出「{tf.text[:16]}…」"
+                       f"估算 {_n(need)} in > 框高 {_n(h)} in（{sh.path}）", sh)
             elif need > h + 0.01:
                 warnings.append(f"第 {sidx} 页: 文本框接近溢出「{tf.text[:16]}…」"
                                 f"估算 {_n(need)} in / 框高 {_n(h)} in")
@@ -487,7 +567,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("pptx")
     ap.add_argument("--deck")
-    ap.add_argument("--baseline", help="模板 .pptx；与之相同的越界形状不计入 Hard")
+    ap.add_argument("--baseline", help="原模板；仅源页中原样保留的对象问题降为 Info")
+    ap.add_argument("--baseline-map", help="strict/custom map；否则从 --deck 的 template_slide 读取源页")
     ap.add_argument("--strict", action="store_true")
     args = ap.parse_args()
 
@@ -498,10 +579,10 @@ def main() -> int:
         sys.stderr.write(f"打开 {out_path} 失败: {e}\n")
         return 2
 
-    baseline = frozenset()
+    template = None
     if args.baseline:
         try:
-            baseline = collect_baseline(Presentation(str(Path(args.baseline).expanduser().resolve())))
+            template = Presentation(str(Path(args.baseline).expanduser().resolve()))
         except Exception as e:
             sys.stderr.write(f"打开 baseline {args.baseline} 失败: {e}\n")
             return 2
@@ -518,6 +599,26 @@ def main() -> int:
     if deck_slides is not None and len(deck_slides) != len(prs.slides):
         sys.stderr.write(f"✗ 页数不一致: deck {len(deck_slides)} 页 vs pptx {len(prs.slides)} 页\n")
         return 1
+    source_pages = None
+    if args.baseline_map and template is None:
+        ap.error('--baseline-map requires --baseline')
+    if template is not None:
+        try:
+            records = (json.loads(Path(args.baseline_map).read_text(encoding='utf-8'))['slides']
+                       if args.baseline_map else deck_slides)
+            if records is None or len(records) != len(prs.slides):
+                raise ValueError('baseline requires an output-page map or --deck with template_slide')
+            source_pages = [record.get('template_slide') for record in records]
+            if any(page is not None and (type(page) is not int or not 1 <= page <= len(template.slides))
+                   for page in source_pages):
+                raise ValueError('baseline template_slide out of range')
+            if not any(page is not None for page in source_pages):
+                raise ValueError('baseline has no audited source-page assignments')
+            if (prs.slide_width, prs.slide_height) != (template.slide_width, template.slide_height):
+                raise ValueError('baseline slide dimensions differ')
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            sys.stderr.write(f'baseline audit input invalid: {exc}\n')
+            return 2
 
     from pptx_package import package_problems
     package_issues = package_problems(out_path)
@@ -525,11 +626,19 @@ def main() -> int:
     # relationship. Some producers leave them stale even in readable files.
     warnings = [problem for problem in package_issues if problem.startswith("docProps/app.xml:")]
     issues = [problem for problem in package_issues if problem not in warnings]
+    if deck:
+        from speaker_notes import verify_notes
+        issues.extend(verify_notes(prs, deck))
     infos = []
     signatures = []
     page_w, page_h = _inches(prs.slide_width), _inches(prs.slide_height)
     for i, slide in enumerate(prs.slides, start=1):
-        ds = deck_slides[i - 1] if deck_slides else None
+        ds = dict(deck_slides[i - 1]) if deck_slides else {}
+        ds.pop('_baseline_shapes', None)  # JSON cannot grant its own exemption.
+        baseline = frozenset()
+        if source_pages and source_pages[i - 1] is not None:
+            ds, baseline = audited_template_page(template.slides[source_pages[i - 1] - 1],
+                                                  slide, page_w, page_h, ds)
         sig = check_slide(slide, i, ds, issues, warnings, page_w, page_h, baseline, infos)
         if sig and sig[1]:
             signatures.append(sig)

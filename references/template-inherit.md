@@ -1,81 +1,96 @@
-# 模板继承（用户选择"完全遵循模板"时必读）
+# 模板继承与 map 接口
 
-设计要求：严格遵循模板。页面比例、母版、版式、主题色、分隔线/色块装饰、页眉页脚页码、图片放置逻辑
-一律以模板为准，不另起视觉系统。做法是**复制模板原页并填充**：用 OfficeCLI 在模板副本里复制最接近的原页，
-只替换文字、图片、表格内容，必要时将顶层图片/图表位同位替换为原生图表；母版与装饰天然保留。模板原件不会被修改。
-半自主模式另见 `template-semi-autonomous.md`，它使用相同的 OfficeCLI 原子操作，但额外复制模板组合原子扩展内容。
+本文件负责 `template_fill.py` 的 strict/custom 边界、选页、寻址与字段。半自主正文画布使用 [template-semi-autonomous.md](template-semi-autonomous.md)，不走此接口。两种模板路径均继承原模板的比例、主题、母版和字体配色，不运行采样器。半自主在清理后的安全区复用核心正文渲染器，不使用独立采样画布。
 
-## 1. 流程
+## 1. 完全遵循：strict
 
-1. `analyze_template.py <模板.pptx> -o 模板摘要.md` 看版式与主题色，再加 `--slides-json` 看逐页清单
-   （页号、版式名、每个形状含组合内子形状的 key/name/id/类型/占位符/位置/文字摘要；组合子形状的位置是组合内坐标）。
-2. 按 deck.json 每页的类型与内容量，为它挑一页模板原页。同一模板页可复用多次；模板里没被选中的原页会删除。
-3. 写 `map.json`（格式见 §2）。
-4. `python template_fill.py --template 模板.pptx --deck deck.json --map map.json --output "<中文名>.pptx"`。
-   运行 OfficeCLI 前，`template_fill.py` 会按模板文本框的字号、内边距、换行方式和尺寸预估替换文字容量；竖排标签、不换行标题和缩放后的 clone group 也会检查。替换图片同时核对源文件像素与显示尺寸，源图有效分辨率低于 70% 时直接拒绝。容量或清晰度不合适就换模板页、缩短内容或换源图。
-   按 [template-animation.md](template-animation.md) 在编辑前生成计划（可用 `--animation-plan-only` 审阅）。临时副本编辑后应用计划、检查包引用、页数、内容落位、组合与布局；任何一步失败保留上一次成功输出。公式等后处理完成后复核动画计划并逐页目视检查。
-5. 有公式时：`python formula.py "<中文名>.pptx"`（读取 `<输出名>.formulas.json`，写入原生可编辑公式）。
-6. `validate_pptx.py "<中文名>.pptx" --deck deck.json --baseline 模板.pptx` 与逐页预览复核，按 [validation.md](validation.md) 分别记录验证范围。
+map 默认 `"mode": "strict"`。复制容量合适的原页，替换已有文字、图片或表格内容，保持全部对象数量、位置、尺寸、分组、连接线、编号和底衬。每个语义槽位都应填入真实的论据、机制、条件或边界；材料不足时换页或拆页。
 
-完全遵循和半自主不跑 `sample_style.py`，也不使用渲染器副本，配色继承模板。deck.json 先过 `scripts/deck_check.py deck.json --template-mode`，豁免范围见 schema。
+strict 禁止 `remove`、`clone_groups`、`add_texts`、`extra_shapes`、`formulas` 和 `fields.chart`。文字可显式调整字号或主题色以修正模板缺陷，但不得靠持续缩字号挤入内容。对象结构的修改使用 §4 的 custom 接口，并准确标注模式。
 
-## 2. map.json 格式
+## 2. 执行流程
 
-`slides` 数组与 deck.json 的 `slides` 一一对应、顺序一致，数量不等直接报错。
+命令从 skill 根目录运行，`<py>` 为项目虚拟环境解释器。
+
+```text
+<py> scripts/analyze_template.py 模板.pptx -o 模板摘要.md
+<py> scripts/analyze_template.py 模板.pptx --slides-json > 模板清单.json
+<py> scripts/deck_check.py deck.json --template-mode
+<py> scripts/template_preflight.py --template 模板.pptx --map map.json --output preflight.json
+<py> scripts/template_fill.py --template 模板.pptx --deck deck.json --map map.json --output 输出.pptx --animation-plan-only
+<py> scripts/template_fill.py --template 模板.pptx --deck deck.json --map map.json --output 输出.pptx
+```
+
+1. 先逐页看实际预览，再结合 inventory 建立语义选页目录，记录封面、目录、章节、流程、对比、表格、并列等角色、适合的信息关系和保守容量。依资料分配事实与槽位，再选择原页，不能只凭对象数选页。`map.slides` 与 `deck.slides` 数量、顺序一一对应。同一原页可复用，未选原页不进入输出。
+2. preflight 只读检查拟替换文字容量、原模板正文缺陷、几何 baseline 与声明的删除项。原模板的正文缺陷不能通过 baseline 豁免。
+3. 生成器在暂存包中独立克隆所选页，重映射关系，为标签和备注创建独立部件；保留母版、版式与主题关联。纯文字字符串映射直接替换发生变化的槽位，保留原段落和首 run 属性，不重写未变化的富文本。其它对象操作经 OfficeCLI 批量编辑，完成后 flush/close 再由 Python 读取。
+4. 应用[模板动画计划](template-animation.md)，写入[讲稿](deck-schema.md#讲稿)，复查内容落位、包关系、容量和布局。strict 最后对比原页的几何、对象数、分组和槽位结构；克隆元数据身份不参与几何比较。任何步骤失败均不替换已有成功输出，模板原件始终只读。
+5. 按[最终校验](validation.md)完成后处理、逐页预览与适用计划复核。单独复核 strict 可运行：
+
+```text
+<py> scripts/template_contract.py --template 模板.pptx --output 输出.pptx --map map.json
+```
+
+脚本自动检查非空且名称匹配 `Text数字` / `Bullet数字` 的文字槽位是否映射；其它命名的语义槽位须依据 inventory 人工逐项核对。几何一致不能证明内容完整。
+
+## 3. map 字段与 key
 
 ```json
 {
+  "mode": "strict",
   "slides": [
-    {"template_slide": 1, "fields": {"标题": "封面标题", "副标题": {"text": "汇报人 · 2026.11", "size": 20}}},
-    {"template_slide": 2, "fields": {"组合 35/文本框 18": "第一章标题", "组合 35/文本框 23": "第一章说明"}},
-    {"template_slide": 3,
-     "fields": {"标题": "结论句", "正文": "要点一\n要点二", "图片": {"image": "imgs/a.png"}},
-     "remove": ["装饰图"],
-     "extra_shapes": [{"text": "图 1 说明", "x": "7.6cm", "y": "13cm", "width": "12cm", "height": "1cm",
-                       "size": 12, "color": "tx2"}],
-     "formulas": [{"latex": "\\frac{a}{b}", "display": true, "x": "2cm", "y": "8cm", "width": "14cm", "height": "3cm"}]}
+    {"template_slide": 1, "fields": {"标题": "封面标题", "副标题": {"text": "汇报人 · 日期", "size": 20}}},
+    {"template_slide": 3, "fields": {"标题": "资料支持的完整结论句", "组合 35/文本框 18": "真实论据及成立条件"}}
   ]
 }
 ```
 
-- `template_slide`：模板页号，从 1 开始。
-- `fields`：键是模板页上的形状 key（用 `analyze_template.py --slides-json` 里每个形状的 `key`），值是：
-  - 字符串：改文字，`\n` 分段；需要改字号时写 `{"text": "…", "size": 40}`。
-  - `{"image": 路径}`：换图，路径相对 map.json；模板图片位的裁剪会被重置，新图的宽高比最好和图片框接近。
-  - `{"table": [["表头"],["单元格"]]}`：只改模板里已有表格的单元格。
-  - `{"chart": {...}}`：删除顶层图片/图表位，在同一坐标由 OfficeCLI 添加 native chart；chart 参数和实现边界统一见 [charts/EXT.md](../extensions/charts/EXT.md)。
-- `remove`：删掉该页不需要的形状（key 写法同上；填充完成后才删，不会影响普通 `fields` 的寻址；chart 替换会自动把原位加入删除清单）。
-- `clone_groups`：半自主模式复制模板页上的顶层组合，保留组内字体、颜色、边框、圆角和段落样式；可用 `x/y/width/height` 调整组位置和尺寸，并在 `fields` 中填写 source 组合内的文字 key。
-  ```json
-  {"source": "组合 13", "x": "2.6cm", "y": "4.2cm", "width": "6.4cm", "height": "8.1cm",
-   "fields": {"组合 13/文本框 8": "新的卡片内容"}}
-  ```
-- `extra_shapes`：原页放不下内容时才新增的文本框。`color` 只能用主题色名
-  （tx1 tx2 bg1 bg2 dk1 dk2 lt1 lt2 accent1–6），长度用 EMU 整数或 `cm/mm/in/pt`。
-- `formulas`：在指定位置留公式占位（形状名 `FORMULA_<序号>`），由 `formula.py` 替换为原生公式。
-- 引用不存在的 key、类型不符（给图片位填文字、给组合直接填文字等）、颜色不是主题色，均在动手前报错并列出可用 key，退出码 2。
+- `template_slide` 为原模板页号，从 1 开始。
+- `fields` 的键使用 `analyze_template.py --slides-json` 输出的 key。字符串替换文字，`\n` 分段；对象 `{"text": "…", "size": 20, "color": "tx1"}` 可显式设置字号和主题色。颜色只接受 `tx1/tx2/bg1/bg2/dk1/dk2/lt1/lt2/accent1–6`。
+- `{"image": "imgs/a.png"}` 替换已有图片，路径相对 map 文件；重置裁剪，素材宽高比应接近原位。
+- `{"table": [["表头"], ["单元格"]]}` 填写原有表格单元格，不创建表格。
+- 顶层 key 为形状名；子形状按 `组合名/子形状名` 逐层连接。同层重名带 `#序号`，按 z 序从 1 起。直接复制 inventory 中的完整 key。
+- `@id=N` 使用模板原始 ID 定位；同页重复 ID 时改用 key。填充操作按扫描结果转换寻址，不能拿输出页 ID 反推模板 key。
+- 组合、连接线、艺术字和图表不能直接填文字；应定位组合内的文本对象。不存在的 key、类型不匹配、非法主题色在编辑前报错并列出可用 key。
 
-### key 规则（含组合内的形状）
+## 4. custom 对象编辑
 
-- 顶层形状：key 就是形状名，如 `标题 1`。
-- 组合内的子形状：`组合名/子形状名`，嵌套多层继续用 `/` 连接，如 `组合 35/文本框 18`、`组合 7/组合 9/矩形 4`。
-- 同一层有同名形状时，在名字后加 `#序号`（按 z 序从 1 起），如 `组合 70/流程图: 数据 9#3`；以 `analyze_template.py --slides-json` 打印的 key 为准，不要自己拼。
-- `@id=N` 写模板页上原来的 id，会被换算成同一个形状；复制页后 officecli 会给所有形状重新编号，所以输出页上的 id 不能用。同页 id 重复时报错，改用 key。
-- 组合本身、连接线、艺术字不能填文字；要改组合里的文字，写子形状的 key。图表不能直接填文字；当前 map 只用 `chart` 对象同位替换顶层图片或图表。
+`"mode": "custom"` 必须同时提供非空 `layout_change_plan`，说明容器、连接线、编号、底衬如何一起调整、重新分布和居中。该字段要求存在；计划的语义完整性仍由人工审阅。custom 不称为完全遵循或半自主。
 
-## 3. 选页与填充原则
+| 字段 | 行为与边界 |
+|---|---|
+| `remove` | 填充后删除列出的 key；图表同位替换自动加入原位删除清单 |
+| `clone_groups` | 仅复制顶层 group；保留字体、颜色、边框、圆角和段落样式。`source` 指组 key；`x/y/width/height` 调整整体几何，`fields` 填写源组内子形状 key |
+| `extra_shapes` | 新增文本框：`text/x/y/width/height/size/color`；颜色仅主题色，不加阴影、发光或渐变 |
+| `formulas` | `latex/display/x/y/width/height` 创建 `FORMULA_` 占位框；生成后运行 `scripts/formula.py 输出.pptx` 转为原生公式 |
+| `fields.chart` | 删除顶层图片或图表，在相同坐标新增原生图表；参数、类型与图片回退见 [charts EXT](../extensions/charts/EXT.md) |
 
-- 封面、目录、章节、结束页优先用模板里对应的专用页；正文页按"纯文字/图文/多栏"选相近的原页。
-- 标题、正文放进模板的占位符，文字样式继承模板，不手动改字号、颜色、位置。
-- 原页没有合适的位置时才用 `extra_shapes`；新增文本框只用主题色，不加阴影、发光、渐变。
-- 不删除模板的页眉、页脚、页码、logo；这些在母版或原页里，复制时自然保留。
-- 每页字数控制在模板占位符能放下的范围内，装不下就换更大的原页，不缩字号硬塞。
+长度接受 EMU 整数或带 `cm/mm/in/pt` 的值。`add_texts` 不是生成器支持的字段，不使用。
 
-## 4. 已知限制
+```json
+{
+  "mode": "custom",
+  "layout_change_plan": "调整整组容器与连线，复核编号和底衬，按正文区域重新居中。",
+  "slides": [{
+    "template_slide": 3,
+    "fields": {"标题": "资料支持的结论"},
+    "clone_groups": [{"source": "组合 13", "x": "2.6cm", "y": "4.2cm", "width": "6.4cm", "height": "8.1cm", "fields": {"组合 13/文本框 8": "真实内容"}}],
+    "extra_shapes": [{"text": "图注", "x": "2cm", "y": "13cm", "width": "12cm", "height": "1cm", "size": 12, "color": "tx2"}]
+  }]
+}
+```
 
-- 没有合适原页时，该页只能用最接近的原页加 `extra_shapes` 拼，版式丰富度不如非模板模式。
-- 表格只填充模板已有单元格，不新建。图表可保留或按 charts EXT 同位替换；不支持的变更须明确采用图片替换流程并记录编辑限制，map 不自动执行 SVG 回退。
-- OfficeCLI 的 `add --from` 不支持把嵌套 shape 直接复制到页面根部；半自主扩展应复制顶层 group，再用复制后 group 的路径设置组内文字。复杂嵌套图片位不能直接替换为根部 chart。
-- 公式字号由 PowerPoint 默认决定，放不下时调大 `formulas` 的 width/height。
-- 预览引擎、公式和日期/页码占位的限制见 validation；静态预览不证明目标应用打开或放映已验证。
-- 交付时说明：哪些模板页被复用、哪些页用了 `extra_shapes` 或回退，方便用户在 PowerPoint 里微调。
+## 5. 容量与失败回退
+
+文字预检使用原字号、内边距、换行和实际显示尺寸，包括竖排标签、不换行标题与缩放 group 子形状。替换图片检查原生像素，低于显示需求的 70% 时阻断；Pillow 缺失时仍能读取 PNG/JPEG 头，未知尺寸报错。
+
+| 情况 | 处理 |
+|---|---|
+| 文字装不下 | 精简而不改变事实，细节放讲稿；仍不足换更大原页或拆页 |
+| 原模板示例、英文副标或未用槽位溢出 | 显式填充修正；strict 保留槽位，custom 才能声明删除 |
+| 固定图案叠加或出血 | 核对真实渲染后保留设计 baseline，新文字碰撞仍阻断 |
+| 零尺寸或无意义对象 | strict 换页；经授权的 custom 在计划中整体清理。保留页眉、页脚、页码和 logo |
+| 没有足够容量 | 换页、拆页，或采用用户已授权的半自主模式 |
+| 执行或校验失败 | 丢弃暂存包，返回 deck/map/选页修正后重新生成 |
+
+公式字号由目标应用决定，新增公式须给足区域；strict 的行内公式后处理若改变对象结构，仍须重新核验严格契约。交付记录复用原页、实际模式与回退项。预览引擎差异和原生打开限制统一见 validation。

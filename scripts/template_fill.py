@@ -1,10 +1,11 @@
-"""模板模式：复制模板副本，用 officecli 复制原页并填充内容，不改原模板。
+"""模板模式：独立克隆所选原页及自有部件，再用 OfficeCLI 填充，不改原模板。
 
 用法:
   python template_fill.py --template 模板.pptx --deck deck.json --map map.json --output out.pptx
 
-map.json 格式见 references/template-inherit.md。流程：复制模板→批量（原子）复制所选原页并填充
-→删除模板原页→落盘→重开校验。有公式时写出 <output>.formulas.json，再跑 formula.py。
+map.json 格式见 references/template-inherit.md。流程：包级克隆所选页并重映射关系
+→OfficeCLI 原子批量填充暂存文件→应用动画计划与讲稿→重开校验→原子发布。
+strict 保持对象几何；改变对象集合须显式 custom。有公式时写出 sidecar，再跑 formula.py。
 
 退出码: 0 成功；1 执行或校验失败；2 map/模板/参数有误。
 """
@@ -14,7 +15,6 @@ import json
 import math
 import os
 import re
-import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -45,9 +45,15 @@ def scan_template(path):
     """每页返回 {"keys": key→记录, "ids": id→[key], "dup": 重复的 key 集合}。"""
     prs = Presentation(path)
     pages = []
+    from validate_pptx import positioned_shapes
     for s in prs.slides:
         keys, ids, dup = {}, {}, set()
+        displayed = {id(sh._element): sh for sh in positioned_shapes(s.shapes)}
         for rec in walk_shapes(list(s.shapes)):
+            sh = displayed.get(id(rec["shape"]._element))
+            if sh is not None:
+                rec["display_width"] = sh.width
+                rec["display_height"] = sh.height
             if rec["key"] in keys:
                 dup.add(rec["key"])
             keys[rec["key"]] = rec
@@ -201,13 +207,22 @@ def build_ops(maps, pages, map_dir):
                 text = val if isinstance(val, str) else val["text"]
                 if rec["kind"] != "text":
                     raise MapError(f"map 第 {k} 项：" + explain_wrong_kind(key, rec, page, "填文字"))
-                capacity = check_text(rec["shape"], text, f"map 第 {k} 项 {key!r}",
-                                      size=val.get("size") if isinstance(val, dict) else None)
+                # An unchanged inherited label remains covered by the template
+                # baseline. Capacity is a gate for new content; re-measuring a
+                # mixed-run decorative word can create a false failure.
+                capacity = [] if text == rec["shape"].text else check_text(
+                    rec["shape"], text, f"map 第 {k} 项 {key!r}",
+                    width=rec.get("display_width"), height=rec.get("display_height"),
+                    size=val.get("size") if isinstance(val, dict) else None)
                 if capacity:
                     raise MapError("；".join(capacity))
                 props = {"text": text}
                 if isinstance(val, dict) and "size" in val:
                     props["size"] = val["size"]
+                if isinstance(val, dict) and "color" in val:
+                    if val["color"] not in SCHEME_COLORS:
+                        raise MapError("模板字段 color 只接受主题色名")
+                    props["color"] = val["color"]
                 ops.append({"command": "set", "path": base, "props": props})
                 checks.append(("text", k, shifted(rec["steps"], removes, key), key, text))
             elif isinstance(val, dict) and "image" in val:
@@ -246,8 +261,8 @@ def build_ops(maps, pages, map_dir):
             else:
                 raise MapError(f"map 第 {k} 项：{key!r} 的值必须是字符串、{{\"text\":..,\"size\":..}}、"
                                f"{{\"image\":路径}}、{{\"chart\":图表对象}} 或 {{\"table\":二维数组}}")
-        # 半自主模式用模板的整组设计原子扩展内容。整组 clone 会连同字体、颜色、
-        # 形状、圆角和段落样式一起复制；随后只改组内文字与组的位置。
+        # Legacy explicit custom interface only. Strict mode rejects cloning; the
+        # semi-autonomous path clears the body canvas via template_canvas.py.
         source_group_count = max(
             (rec["steps"][0][1] for rec in page["keys"].values()
              if rec["steps"] and rec["steps"][0][0] == "group"),
@@ -298,6 +313,10 @@ def build_ops(maps, pages, map_dir):
                 props = {"text": text}
                 if isinstance(field_val, dict) and "size" in field_val:
                     props["size"] = field_val["size"]
+                if isinstance(field_val, dict) and "color" in field_val:
+                    if field_val["color"] not in SCHEME_COLORS:
+                        raise MapError("模板 clone 字段 color 只接受主题色名")
+                    props["color"] = field_val["color"]
                 ops.append({"command": "set", "path": slide_path(cur, mapped), "props": props})
                 checks.append(("text", k, shifted(mapped, removes, field_key), field_key, text))
         # 位置寻址下删除会让同类后续形状序号前移，所以放在填充之后，并从后往前删
@@ -334,6 +353,11 @@ def build_ops(maps, pages, map_dir):
     return ops, checks, formulas
 
 
+def write_speaker_notes(prs, deck):
+    from speaker_notes import apply_notes
+    return apply_notes(prs, deck, preserve_template=True)
+
+
 def verify(out, n_expected, checks):
     prs = Presentation(out)
     slides = list(prs.slides)
@@ -363,6 +387,27 @@ def verify(out, n_expected, checks):
     return problems
 
 
+def direct_text_fill(staging, maps, pages):
+    """Apply pure text edits without OfficeCLI rewriting untouched rich text."""
+    from slide_clone import replace_text
+    prs = Presentation(str(staging))
+    for output_index, mapping in enumerate(maps, 1):
+        slide = prs.slides[output_index - 1]
+        page = pages[mapping['template_slide'] - 1]
+        targets = {rec['steps']: rec['shape'] for rec in walk_shapes(list(slide.shapes))}
+        for key, value in (mapping.get('fields') or {}).items():
+            rec = resolve_key(key, page, mapping['template_slide'])
+            if rec['kind'] != 'text' or not isinstance(value, str):
+                raise MapError('direct text fill received a non-text field')
+            if value == rec['shape'].text:
+                continue
+            target = targets.get(rec['steps'])
+            if target is None:
+                raise MapError(f'克隆页找不到文字槽位 {key!r}')
+            replace_text(target, value)
+    prs.save(str(staging))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--template", required=True)
@@ -380,11 +425,34 @@ def main():
     try:
         deck = json.loads(Path(a.deck).read_text(encoding="utf-8"))
         mapping = json.loads(Path(a.map).read_text(encoding="utf-8"))
+        from template_contract import validate_map_mode
+        try:
+            map_mode = validate_map_mode(mapping)
+        except ValueError as exc:
+            raise MapError(str(exc)) from exc
         maps = mapping["slides"]
         n_deck = len(deck["slides"])
+        if deck.get('notes_enabled', True) and map_mode == 'strict':
+            missing = [i for i,p in enumerate(deck['slides'],1) if not p.get('notes')]
+            if missing:
+                raise MapError(f'新稿必须逐页显式提供 notes，缺少讲稿的页: {missing}')
         if len(maps) != n_deck:
             raise MapError(f"map 有 {len(maps)} 项，deck 有 {n_deck} 页，必须一一对应")
         pages = scan_template(str(tpl))
+        if map_mode == 'strict':
+            for index, ms in enumerate(maps,1):
+                t = ms.get('template_slide')
+                if not isinstance(t,int) or not 1 <= t <= len(pages):
+                    raise MapError(f'第 {index} 页 template_slide 无效')
+                page = pages[t-1]
+                supplied = {resolve_key(key,page,t)['key']:value for key,value in (ms.get('fields') or {}).items()}
+                slots = [r for r in page['keys'].values() if r['kind']=='text'
+                         and re.fullmatch(r'(?:Text|Bullet)\d+',r['shape'].name)
+                         and r['shape'].text.strip()]
+                missing = [r['key'] for r in slots if not supplied.get(r['key'])
+                           or isinstance(supplied[r['key']],dict) and not supplied[r['key']].get('text')]
+                if missing:
+                    raise MapError(f'第 {index} 页有未填的原版式语义槽位: {missing}；重组真实材料或换页，不能删卡')
         ops, checks, formulas = build_ops(maps, pages, Path(a.map).resolve().parent)
         plan = build_plan(tpl, maps, pages,
                           a.animation_policy or mapping.get("animation_policy", "auto"))
@@ -402,15 +470,25 @@ def main():
         return 2
 
     from pptx_package import package_problems, repair_package
-    from validate_pptx import check_slide, collect_baseline, _inches
+    from validate_pptx import check_slide, audited_template_page, _inches
 
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".template-fill-", dir=out.parent) as tmp:
         staging = Path(tmp) / out.name
-        shutil.copyfile(tpl, staging)
         try:
+            from slide_clone import clone_selected, prepared_edit_ops
+            clone_selected(tpl, [m['template_slide'] for m in maps], staging)
+            fill_ops = prepared_edit_ops(ops, len(pages))
+            pure_text = all(
+                op.get('command') == 'set'
+                and set((op.get('props') or {})) == {'text'}
+                and isinstance((op.get('props') or {}).get('text'), str)
+                for op in fill_ops)
             try:
-                ocli.batch(str(staging), ops)
+                if pure_text:
+                    direct_text_fill(staging, maps, pages)
+                else:
+                    ocli.batch(str(staging), fill_ops)
             finally:
                 ocli.close(str(staging))
             apply_plan(staging, plan)
@@ -418,14 +496,33 @@ def main():
             problems = (package_problems(staging) + verify_plan(staging, plan)
                         + verify(str(staging), n_deck, checks))
             prs = Presentation(str(staging))
-            baseline = collect_baseline(Presentation(str(tpl)))
+            notes_report = write_speaker_notes(prs, deck)
+            prs.save(str(staging))
+            repair_package(staging, repair_animations=False)
+            prs = Presentation(str(staging))
+            from speaker_notes import verify_notes
+            problems += verify_notes(prs, deck)
+            original_prs = Presentation(str(tpl))
             warnings = []
             for index, slide in enumerate(prs.slides, 1):
                 # Formula conversion is a separate postprocessing step. All
                 # other layout checks must pass before publishing this output.
-                check_slide(slide, index, deck["slides"][index - 1], problems, warnings,
+                page_for_check = dict(deck["slides"][index - 1])
+                baseline = frozenset()
+                page_for_check.pop('_baseline_shapes', None)
+                if map_mode == 'strict' and maps[index - 1].get('fields'):
+                    page_for_check, baseline = audited_template_page(
+                        original_prs.slides[maps[index - 1]['template_slide'] - 1], slide,
+                        _inches(prs.slide_width), _inches(prs.slide_height), page_for_check)
+                check_slide(slide, index, page_for_check, problems, warnings,
                             _inches(prs.slide_width), _inches(prs.slide_height),
                             baseline, [], check_formulas=False)
+            if map_mode == 'strict':
+                from template_contract import check_contract
+                try:
+                    check_contract(tpl, staging, [m['template_slide'] for m in maps])
+                except ValueError as exc:
+                    problems.append(str(exc))
             if problems:
                 print("输出校验未通过，未替换已有输出:\n  " + "\n  ".join(problems), file=sys.stderr)
                 return 1
@@ -440,6 +537,8 @@ def main():
             print(f"模板生成失败，未替换已有输出: {exc}", file=sys.stderr)
             return 1
     write_plan(plan, out)
+    Path(str(out) + ".notes.json").write_text(json.dumps({"enabled": deck.get("notes_enabled", True),
+            "pages": notes_report}, ensure_ascii=False, indent=2), encoding="utf-8")
     sidecar = Path(str(out) + ".formulas.json")
     if formulas:
         sidecar.write_text(json.dumps(formulas, ensure_ascii=False, indent=2), encoding="utf-8")

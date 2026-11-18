@@ -1,7 +1,7 @@
 # 阶段一：阅读材料（source-intake）
 
-> 设计要求：严格遵循模板——先分析页面比例/母版版式/页眉页脚页码/主辅色/分隔线色块装饰/图片放置逻辑/
-> 各类型页版式规律，优先复用模板已有版式；先判断领域、汇报场景、目标听众，按领域通行惯例组织内容；
+> 读取资料并判断领域、场景与听众。有模板时分析比例、母版、版式、页眉页脚、配色、装饰和图片规律，
+> 再按所选模式确定继承范围；
 > 内容顺序尊重原始资料逻辑，重组时**不增删核心信息**；图表文字结论相互印证、数据口径一致；
 > 资料不足的部分如实指出缺口，不编造内容填充。
 
@@ -10,7 +10,8 @@
 | 素材类型 | 方式 |
 |---|---|
 | 纯文本 / Markdown | 直接读 |
-| Word (.docx) / PDF / Excel (.xlsx) | 用 Read 工具直接读（支持解析） |
+| PDF | 用 Read 分页读取；扫描件查看渲染页 |
+| Word (.docx) / Excel (.xlsx) | 用 OfficeCLI 的 `view text` / `get` 提取；复杂结构回查原文件 |
 | HTML / 网页 URL | `scripts/source_to_md.py <文件或URL> [-o out.md]` 转 Markdown 后读 |
 | CSV / TSV | 直接按表格读 |
 | 图片 | 用 Read 工具看内容（必要时 OCR），记录到材料摘要；能否放进 PPT 取决于阶段二用户是否允许复用资料图片 |
@@ -23,7 +24,7 @@
 先装 PyMuPDF（走清华源，装进项目 venv）：
 
 ```
-pip install -i https://pypi.tuna.tsinghua.edu.cn/simple pymupdf
+<py> -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple pymupdf
 ```
 
 ```python
@@ -55,7 +56,7 @@ page.get_pixmap(dpi=200, clip=pymupdf.Rect(70, 90, 540, 360)).save("fig4.png")  
 
 ## 3. 模板分析（有模板时必做）
 
-用 `scripts/analyze_template.py <模板.pptx> -o 模板摘要.md` 自动提取，并**人工补全以下内容**。完全遵循模板和半自主时都要做模板 inventory：前者用 OfficeCLI 编辑模板副本（见 `template-inherit.md`），后者还要记录内容页母页候选和可复制的顶层组合（见 `template-semi-autonomous.md`），所以模板里哪些原页可复用、各页有哪些内容 key 要在这里理清：
+用 `scripts/analyze_template.py <模板.pptx> -o 模板摘要.md` 自动提取，并**人工补全以下内容**。完全遵循模板和半自主时都要做模板 inventory：前者在独立克隆页上按字段类型填充（见 `template-inherit.md`），后者还要记录内容页母页候选、正文区域与三层保留/清除清单（见 `template-semi-autonomous.md`），所以模板里哪些原页可复用、各页有哪些内容 key 要在这里理清：
 
 - [ ] 页面比例及尺寸（自动）
 - [ ] 母版和版式结构：有哪些可用版式、各自用途（自动提取名称与占位符）
@@ -65,7 +66,7 @@ page.get_pixmap(dpi=200, clip=pymupdf.Rect(70, 90, 540, 360)).save("fig4.png")  
 - [ ] 图片放置逻辑：图片出现的位置、大小规律、是否留白
 - [ ] 各类型页面的版式规律：标题页/目录页/章节页/正文页/图文页/表格页/总结页分别长什么样
 
-结论写入 `模板摘要.md`：**新 PPT 优先复用模板已有版式，不因内容不同就重新设计整套视觉系统。**
+结论写入 `模板摘要.md`：完全遵循选原页填槽；半自主继承背景与风格并清空正文版式；完全自主使用独立视觉方案。
 
 ### 3.1 模板动画 inventory（阶段一必做）
 
@@ -92,7 +93,7 @@ page.get_pixmap(dpi=200, clip=pymupdf.Rect(70, 90, 540, 360)).save("fig4.png")  
 - 领域/场景/听众：...
 - 资料来源：...（文件名，如有）
 - 模板摘要：有（见 模板摘要.md）/ 无
-- 用户选择（阶段二）：模板风格模式 完全遵循/半自主/完全自主白底极简/完全自主用户指定；模式 完整/Quick/fast-lite；允许复用资料图片 是/否；统计图表 默认开启（仅真实数据关系）；拓展 动效/几何装饰角饰/特殊排版/无；模板 `animation_policy` 默认 `auto`/`preserve`/`strip`，逐页覆盖；几何底纹 明确允许/不允许
+- 用户选择（阶段二）：模板风格模式 完全遵循/半自主/完全自主白底极简/完全自主用户指定；模式 完整/Quick/fast-lite；允许复用资料图片 是/否；统计图表 默认开启（仅真实数据关系）；拓展 动效/几何装饰角饰/特殊排版/无；template_fill/template_mother 的 `animation_policy`，或 canvas 固定清理策略；几何底纹 明确允许/不允许
 
 ## 事实清单
 （按主题列出：每个事实一句话，带来源位置，数字/单位/术语逐字摘录）

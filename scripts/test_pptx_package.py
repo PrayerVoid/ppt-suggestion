@@ -2,6 +2,7 @@
 import contextlib
 import io
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -237,6 +238,9 @@ class MotherPublicationTests(unittest.TestCase):
             self.stderr = io.StringIO()
             stack.enter_context(contextlib.redirect_stderr(self.stderr))
             stack.enter_context(patch.object(self.mother, "scan_template", return_value=[{}]))
+            # These lightweight OPC fixtures isolate publication, not the clone parser.
+            stack.enter_context(patch('slide_clone.clone_selected',
+                side_effect=lambda template, selected, output: shutil.copyfile(template, output)))
             stack.enter_context(patch.object(self.mother.ocli, "batch", side_effect=batch))
             closed = stack.enter_context(patch.object(self.mother.ocli, "close", side_effect=close_error))
             presentation = stack.enter_context(patch.object(

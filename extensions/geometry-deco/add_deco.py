@@ -7,9 +7,9 @@ Usage:
 
 一份 deck 只用一种图案族（由 --motif 固定，或由 --seed 可复现地选择）：
   封面/结束页用大构图，章节页用同一构图的上下翻转版；目录页与内容页用完全相同的小角标。
-装饰统一命名 DECO_<序号>，放在每页最底层。生成前读取每页所有非装饰形状（含组合内子形状）的位置，
+装饰统一命名 DECO_PPTSUGGESTION_<序号>，放在每页最底层。生成前读取每页所有非装饰形状（含组合内子形状）的位置，
 整套选一个对所有同类页都不冲突的角落与缩放；没有这样的方案时，冲突的页省略装饰并打印页号。
-重复运行会先删除已有 DECO_ 形状。
+重复运行会先删除已有 DECO_PPTSUGGESTION_ 形状。
 """
 
 from __future__ import annotations
@@ -204,7 +204,7 @@ def _text_occupied_box(sh):
 def obstacles(slide, pw, ph, include_large=False, occupied_text=False):
     out = []
     for sh in slide.shapes:
-        if (sh.name or "").startswith("DECO_") or sh.width is None or sh.left is None:
+        if (sh.name or "").startswith("DECO_PPTSUGGESTION_") or sh.width is None or sh.left is None:
             continue
         text_box = _text_occupied_box(sh) if occupied_text else None
         if text_box == ():
@@ -462,7 +462,7 @@ def _draw_template(slide, part, accent, tint, start, pw, ph, opacity=None):
     for k, sh in enumerate(added):
         if opacity is not None:
             _set_shape_opacity(sh, opacity)
-        sh.name = f"DECO_{start + k}"
+        sh.name = f"DECO_PPTSUGGESTION_{start + k}"
         el = sh._element
         tree.remove(el)
         tree.insert(2 + k, el)
@@ -497,7 +497,7 @@ def draw(slide, parts, accent, tint, start, pw, ph, opacity=None):
         if opacity is not None:
             _set_shape_opacity(sh, opacity)
         sh.shadow.clear()
-        sh.name = f"DECO_{start + k}"
+        sh.name = f"DECO_PPTSUGGESTION_{start + k}"
         el = sh._element
         tree.remove(el)
         tree.insert(2 + k, el)
@@ -514,7 +514,7 @@ def _background_attempt(slide, parts, accent, tint, start, pw, ph,
     next_start = draw(slide, parts, accent, tint, start, pw, ph,
                       opacity=limits["opacity"])
     added = [sh for sh in slide.shapes
-             if sh.name.startswith("DECO_") and sh.name not in before_names]
+             if sh.name.startswith("DECO_PPTSUGGESTION_") and sh.name not in before_names]
     actual = [_shape_bbox(sh) for sh in added]
     reasons = []
     if any(l < 0.01 or t < 0.01 or r > pw - 0.01 or b > ph - 0.01
@@ -564,12 +564,13 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--seed", type=int)
     ap.add_argument("--motif", choices=MOTIF_NAMES,
-                    help="固定几何母题；不传时由 seed 选择，未传 seed 使用 circles")
+                    help="固定几何母题；否则读取 style.geometry_motif 或显式 seed，无隐式母题")
     ap.add_argument("--mode", choices=("corner", "background", "auto"), default="auto",
                     help="corner 使用角落装饰；background 必须显式启用；auto 默认走 corner")
     ap.add_argument("--profile", choices=tuple(PROFILES), default="formal",
                     help="背景安全门槛：formal、balanced 或 expressive")
-    ap.add_argument("--accent", default="4F6082")
+    ap.add_argument("--accent", help="无 style/渲染证据时必须显式指定；存在时须一致")
+    ap.add_argument("--style", help="与渲染器共用的 style.json")
     args = ap.parse_args()
 
     deck = json.loads(Path(args.deck).read_text(encoding="utf-8"))
@@ -578,23 +579,47 @@ def main() -> int:
         sys.stderr.write("页数与 deck.json 不一致，请确认 deck 对应这份 pptx\n")
         return 1
 
-    hexv = args.accent.lstrip("#")
+    style_path = Path(args.style) if args.style else Path(args.deck).resolve().with_name("style.json")
+    design = json.loads(style_path.read_text(encoding="utf-8")) if style_path.exists() else {}
+    render_path = Path(str(Path(args.pptx).resolve()) + ".render.json")
+    render = json.loads(render_path.read_text(encoding="utf-8")) if render_path.exists() else {}
+    expected = render.get("palette", {}).get("ACCENT") or design.get("palette", {}).get("ACCENT")
+    if expected and design.get("palette", {}).get("ACCENT") and expected.upper() != design["palette"]["ACCENT"].lstrip("#").upper():
+        sys.stderr.write("style.palette 与输入PPTX的实际渲染证据不同，请重新渲染后再加装饰\n")
+        return 1
+    if args.accent and expected and args.accent.lstrip("#").upper() != expected.lstrip("#").upper():
+        sys.stderr.write("装饰 accent 与渲染 palette 不一致\n")
+        return 1
+    if not (args.accent or expected):
+        sys.stderr.write("必须提供 --style 或实际渲染证据，或显式 --accent，不能隐式混用默认色板\n")
+        return 1
+    if design and "geometry-deco" not in design.get("enabled_extensions", []):
+        sys.stderr.write("style 未启用 geometry-deco；不能添加装饰\n")
+        return 1
+    hexv = (args.accent or expected).lstrip("#")
+    if len(hexv) != 6 or any(c not in "0123456789abcdefABCDEF" for c in hexv):
+        sys.stderr.write("accent 必须是六位HEX\n")
+        return 2
     rgb = tuple(int(hexv[i:i + 2], 16) for i in (0, 2, 4))
     accent = RGBColor(*rgb)
     tint = RGBColor(*(round(255 - (255 - c) * 0.12) for c in rgb))
     mode = "corner" if args.mode == "auto" else args.mode
-    if args.motif:
-        family = args.motif
+    if args.motif or design.get("geometry_motif"):
+        family = args.motif or design["geometry_motif"]
+        if family not in MOTIF_NAMES:
+            sys.stderr.write("style.geometry_motif 不在受支持的母题中\n")
+            return 2
     elif args.seed is not None:
         choices = (MOTIF_NAMES if mode == "corner"
                    else tuple(PROFILES[args.profile]["motifs"]))
         family = random.Random(args.seed).choice(choices)
     else:
-        family = "circles"
+        sys.stderr.write("请显式给出 --motif、style.geometry_motif 或 --seed；无隐式 circles 默认值\n")
+        return 2
     pw, ph = prs.slide_width / EMU, prs.slide_height / EMU
 
     for slide in prs.slides:
-        for sh in [s for s in slide.shapes if (s.name or "").startswith("DECO_")]:
+        for sh in [s for s in slide.shapes if (s.name or "").startswith("DECO_PPTSUGGESTION_")]:
             sh._element.getparent().remove(sh._element)
 
     n = 1
@@ -627,6 +652,10 @@ def main() -> int:
     out = Path(args.out).expanduser().resolve()
     out.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(out))
+    evidence = {**render, "decoration": {"owner": "ppt-suggestion.geometry-deco", "motif": family,
+                 "accent": hexv.upper(), "seed": args.seed, "mode": mode,
+                 "shape_prefix": "DECO_PPTSUGGESTION_"}}
+    Path(str(out) + ".render.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
     print(str(out))
     return 0
 

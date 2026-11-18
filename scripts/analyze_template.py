@@ -192,7 +192,7 @@ def to_markdown(info: dict) -> str:
             if k in tc:
                 lines.append(f"  - {k}: #{tc[k]}")
     else:
-        lines.append("- 主题色：读取失败（渲染器将回退默认白底低饱和色）")
+        lines.append("- 主题色：读取失败；模板模式仍保留原主题关联，须依据实际预览人工解析显式字体配色，不自动改用自主白底方案")
     lines.append("")
     lines.append("## 版式清单")
     for lo in info["layouts"]:

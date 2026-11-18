@@ -64,7 +64,8 @@ CONTENT_BOTTOM = 7.05
 BLOCK_GAP = 0.22
 TITLE_SIZE = 25                             # 内容页标题字号
 
-def _set_font(run, size=14, bold=False, color=TEXT, italic=False):
+def _set_font(run, size=14, bold=False, color=None, italic=False):
+    color = TEXT if color is None else color
     run.font.size = Pt(size)
     run.font.bold = bold
     run.font.italic = italic
@@ -109,7 +110,8 @@ def add_rect(slide, l, t, w, h, fill, line=None, line_w=0.75, shape=MSO_SHAPE.RE
     return sh
 
 
-def add_hline(slide, l, r, y, color=LINE, w=0.75):
+def add_hline(slide, l, r, y, color=None, w=0.75):
+    color = LINE if color is None else color
     conn = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(l), Inches(y), Inches(r), Inches(y))
     conn.line.color.rgb = color
     conn.line.width = Pt(w)
@@ -117,9 +119,10 @@ def add_hline(slide, l, r, y, color=LINE, w=0.75):
     return conn
 
 
-def add_text(slide, l, t, w, h, text, size=14, bold=False, color=TEXT,
+def add_text(slide, l, t, w, h, text, size=14, bold=False, color=None,
              align=PP_ALIGN.LEFT, anchor=MSO_ANCHOR.TOP, line_spacing=1.15,
              wrap=True, auto_size=None):
+    color = TEXT if color is None else color
     tb = slide.shapes.add_textbox(Inches(l), Inches(t), Inches(w), Inches(h))
     tf = tb.text_frame
     tf.word_wrap = wrap
@@ -148,6 +151,11 @@ def add_text(slide, l, t, w, h, text, size=14, bold=False, color=TEXT,
 # ---------------------------------------------------------------------------
 # No-template rendering
 # ---------------------------------------------------------------------------
+def write_speaker_notes(prs, deck):
+    from speaker_notes import apply_notes
+    return apply_notes(prs, deck)
+
+
 def new_presentation():
     prs = Presentation()
     prs.slide_width = Emu(int(Inches(PAGE_W)))
@@ -221,27 +229,88 @@ def render_content(slide, s, style):
         add_text(slide, PAGE_W - MARGIN_R - 3.4, 0.2, 3.4, 0.3, chapter, size=11,
                  color=FAINT, align=PP_ALIGN.RIGHT)
     add_hline(slide, MARGIN_L, PAGE_W - MARGIN_R, 1.32, color=LINE, w=0.75)
-    x, y0, w, h = content_area()
-    y = y0
-    first_idx = len(slide.shapes)
-    for b in s.get("blocks", []):
-        if not isinstance(b, dict):
-            continue
-        bh = render_block(slide, x, y, w, b, style)
-        if y + bh > CONTENT_BOTTOM + 0.03:
-            raise RuntimeError(f"内容超出页面底部: 「{title}」blocks 排布过高")
-        y += bh + BLOCK_GAP
-    # 内容偏少时整体下移，让上下留白更均匀（最多下移 1.0in）
-    total = y - BLOCK_GAP - y0
-    avail = CONTENT_BOTTOM - y0
-    if 0 < total < avail * 0.85:
-        dy = Inches(min((avail - total) / 2, 0.8))
-        for sh in list(slide.shapes)[first_idx:]:
-            sh.top = sh.top + dy
-    # footer: source + page number
-    src = s.get("source") or style.get("source", "")
+    render_body(slide, s, style)
+    # Production provenance stays internal; visible attribution is explicit.
+    src = s.get("external_citation") or style.get("external_citation", "")
     if src:
         add_text(slide, MARGIN_L, 7.08, 7.0, 0.3, src, size=10, color=FAINT)
+
+
+def render_body(slide, s, style, region=None, *, enlarge=True):
+    """Use the core block layout in a target region (inches), at native coordinates.
+
+    Template canvas disables enlargement, so font sizes, line widths, charts,
+    images and tables retain the dimensions used during measurement.
+    """
+    global CONTENT_BOTTOM
+    previous_bottom = CONTENT_BOTTOM
+    target = content_area() if region is None else region
+    CONTENT_BOTTOM = target[1] + target[3]
+    try:
+        return _render_body(slide, s, style, target, enlarge=enlarge)
+    finally:
+        CONTENT_BOTTOM = previous_bottom
+
+
+def _render_body(slide, s, style, region, *, enlarge):
+    title = s.get("title", "")
+    x, y0, w, h = region
+    blocks = [b for b in s.get("blocks", []) if isinstance(b, dict)]
+    # Reflow at the target reading size before drawing. Uniform scaling preserves
+    # diagrams; rendering into w/scale makes text wrap at its FINAL physical width.
+    # Dense pages retain their original size. Special layouts/images/charts use
+    # their own canvas sizing and therefore opt out of this text-layout policy.
+    scalable = enlarge and all(b.get("kind") not in {"figure", "chart", "formula"} for b in blocks)
+    scale, total = 1.0, 0.0
+    for candidate in ([1.45, 1.35, 1.25, 1.15, 1.0] if scalable else [1.0]):
+        probe, blank = new_presentation()
+        scratch = probe.slides.add_slide(blank)
+        saved = dict(FORMULA_SRC)
+        logical_y = y0
+        try:
+            for b in blocks:
+                logical_y += render_block(scratch, 0, logical_y, w / candidate, b, style) + BLOCK_GAP
+        finally:
+            FORMULA_SRC.clear()
+            FORMULA_SRC.update(saved)
+        total = max(0, logical_y - BLOCK_GAP - y0) * candidate
+        if total <= h + 0.03:
+            scale = candidate
+            break
+    if total > h + 0.03:
+        raise RuntimeError(f"内容超出页面底部: 「{title}」blocks 排布过高")
+    # Optical centering uses all spare space, without the old arbitrary 0.8in cap.
+    top = y0 + max(0, (h - total) / 2)
+    if not enlarge:
+        native_y = top
+        for b in blocks:
+            native_y += render_block(slide, x, native_y, w, b, style) + BLOCK_GAP
+        return
+    first_idx = len(slide.shapes)
+    logical_y = y0
+    for b in blocks:
+        logical_y += render_block(slide, 0, logical_y, w / scale, b, style) + BLOCK_GAP
+    for sh in list(slide.shapes)[first_idx:]:
+        sh.left = int(Inches(x) + sh.left * scale)
+        sh.top = int(Inches(top) + (sh.top - Inches(y0)) * scale)
+        sh.width = int(sh.width * scale)
+        sh.height = int(sh.height * scale)
+        if sh.has_text_frame:
+            for para in sh.text_frame.paragraphs:
+                for run in para.runs:
+                    if run.font.size:
+                        run.font.size = Pt(run.font.size.pt * scale)
+        if sh.has_table:
+            for column in sh.table.columns:
+                column.width = int(column.width * scale)
+            for row in sh.table.rows:
+                row.height = int(row.height * scale)
+            for row in sh.table.rows:
+                for cell in row.cells:
+                    for para in cell.text_frame.paragraphs:
+                        for run in para.runs:
+                            if run.font.size:
+                                run.font.size = Pt(run.font.size.pt * scale)
 
 
 def render_block(slide, x, y, w, b, style):
@@ -252,8 +321,8 @@ def render_block(slide, x, y, w, b, style):
     return fn(slide, x, y, w, b, style)
 
 
-def _panel(slide, x, y, w, h, fill=PANEL):
-    add_rect(slide, x, y, w, h, fill)
+def _panel(slide, x, y, w, h, fill=None):
+    add_rect(slide, x, y, w, h, PANEL if fill is None else fill)
 
 
 def _insight(slide, x, y, w, b, style):
@@ -300,29 +369,28 @@ def _stats(slide, x, y, w, b, style):
 
 
 def _columns(slide, x, y, w, b, style):
-    items = b.get("items", [])
-    n = min(len(items), 3)
-    if n == 0:
-        return 0
-    gap = 0.3
-    cw = (w - gap * (n - 1)) / n
-    maxh = 0.0
+    items = _layout_items(b, "items", 2, 3, "columns")
+    gap = .3
+    cw = (w - gap * (len(items) - 1)) / len(items)
+    maxh = 0
     for i, it in enumerate(items):
-        cx = x + i * (cw + gap)
-        icon = it.get("icon") or f"{i + 1:02d}"
-        add_text(slide, cx, y, 0.8, 0.4, icon, size=13, bold=True, color=ACCENT)
-        kicker = it.get("kicker", "")
-        if kicker:
-            add_text(slide, cx, y + 0.32, cw, 0.3, kicker, size=11, bold=True, color=FAINT)
-        t = it.get("title", "")
-        if t:
-            add_text(slide, cx, y + 0.62, cw, 0.4, t, size=17, bold=True)
-        body = it.get("body", "")
-        if body:
-            bh = text_height(body, 15, cw)
-            add_text(slide, cx, y + 1.15, cw, bh + 0.35, body, size=15, color=SUBTLE, line_spacing=1.25)
-            maxh = max(maxh, 1.15 + bh + 0.1)
-    return max(maxh, 1.35)
+        bx = x + i * (cw + gap)
+        by = y
+        add_text(slide, bx, by, cw, .3, it.get("icon") or f"{i+1:02}", size=13, bold=True, color=ACCENT)
+        by += .42
+        if it.get("kicker"):
+            add_text(slide, bx, by, cw, .3, it["kicker"], size=11, bold=True, color=FAINT)
+            by += .38
+        if it.get("title"):
+            th = text_height(it["title"], 17, cw)
+            add_text(slide, bx, by, cw, th + .08, it["title"], size=17, bold=True)
+            by += th + .22
+        if it.get("body"):
+            bh = text_height(it["body"], 15, cw, 1.25)
+            add_text(slide, bx, by, cw, bh + .12, it["body"], size=15, color=SUBTLE, line_spacing=1.25)
+            by += bh + .12
+        maxh = max(maxh, by-y)
+    return maxh
 
 
 def _steps(slide, x, y, w, b, style):
@@ -394,14 +462,12 @@ def _layers(slide, x, y, w, b, style):
             add_text(slide, x + 0.25, ly + 0.38, w - 0.5, 0.3, t, size=13, bold=True)
         modules = it.get("modules", [])
         if modules:
-            mw = 1.9
             mgap = 0.18
+            mw = (w - .5 - mgap * (len(modules) - 1)) / len(modules)
             mh = 0.5
             mx = x + 0.25
             my = ly + layer_h - mh - 0.15
             for m in modules:
-                if mx + mw > x + w - 0.2:
-                    break
                 add_rect(slide, mx, my, mw, mh, WHITE, line=LINE, line_w=0.75)
                 add_text(slide, mx + 0.1, my + 0.04, mw - 0.2, 0.3, m.get("title", ""), size=11,
                          bold=True, color=TEXT, anchor=MSO_ANCHOR.MIDDLE)
@@ -526,7 +592,7 @@ def _cards(slide, x, y, w, b, style):
     rows = math.ceil(n / cols)
     gap = 0.22
     cw = (w - gap * (cols - 1)) / cols
-    ch = 0.95
+    ch = max([0.95] + [0.6 + text_height(it.get("body", ""), 11, cw - 0.36, 1.1) + 0.08 for it in items])
     h = rows * ch + (rows - 1) * gap
     for i, it in enumerate(items):
         r, c = divmod(i, cols)
@@ -564,35 +630,24 @@ def _rows(slide, x, y, w, b, style):
 
 
 def _compare(slide, x, y, w, b, style):
-    left = b.get("left", {})
-    right = b.get("right", {})
     cw = (w - 0.28) / 2
-    h = 2.3
-    add_rect(slide, x, y, cw, h, PANEL)
-    add_rect(slide, x, y, cw, 0.05, FAINT)
-    add_text(slide, x + 0.22, y + 0.2, cw - 0.44, 0.3, left.get("kicker", ""), size=11,
-             bold=True, color=FAINT)
-    lt = left.get("title", "")
-    if lt:
-        add_text(slide, x + 0.22, y + 0.5, cw - 0.44, 0.5, lt, size=15, bold=True)
-    ly = y + 1.05
-    for it in left.get("items", []):
-        text = it if isinstance(it, str) else it.get("text", "")
-        add_text(slide, x + 0.22, ly, cw - 0.44, 0.4, "×  " + text, size=12, color=SUBTLE)
-        ly += 0.42
-    rx = x + cw + 0.28
-    add_rect(slide, rx, y, cw, h, ACCENT)
-    add_rect(slide, rx, y, cw, 0.05, ACCENT_DK)
-    add_text(slide, rx + 0.22, y + 0.2, cw - 0.44, 0.3, right.get("kicker", ""), size=11,
-             bold=True, color=WHITE)
-    rt = right.get("title", "")
-    if rt:
-        add_text(slide, rx + 0.22, y + 0.5, cw - 0.44, 0.5, rt, size=15, bold=True, color=WHITE)
-    ry = y + 1.05
-    for it in right.get("items", []):
-        text = it if isinstance(it, str) else it.get("text", "")
-        add_text(slide, rx + 0.22, ry, cw - 0.44, 0.4, "✓  " + text, size=12, color=WHITE)
-        ry += 0.42
+    sides = [b.get("left", {}), b.get("right", {})]
+    title_h = max([0.4] + [text_height(side.get("title", ""), 15, cw - .44) + .08 for side in sides])
+    body_top = .5 + title_h + .18
+    heights = [[max(.4, text_height(("×  " if i == 0 else "✓  ") + text, 12, cw - .44) + .10)
+                for text in _point_texts(side.get("items", []))] for i, side in enumerate(sides)]
+    h = max([2.3] + [body_top + sum(hs) + .10 * max(0, len(hs)-1) + .22 for hs in heights])
+    for i, side in enumerate(sides):
+        bx = x + i * (cw + .28)
+        ink = SUBTLE if i == 0 else WHITE
+        add_rect(slide, bx, y, cw, h, PANEL if i == 0 else ACCENT)
+        add_rect(slide, bx, y, cw, .05, FAINT if i == 0 else ACCENT_DK)
+        add_text(slide, bx + .22, y + .2, cw - .44, .3, side.get("kicker", ""), size=11, bold=True, color=FAINT if i == 0 else WHITE)
+        add_text(slide, bx + .22, y + .5, cw - .44, title_h, side.get("title", ""), size=15, bold=True, color=TEXT if i == 0 else WHITE)
+        by = y + body_top
+        for text, ih in zip(_point_texts(side.get("items", [])), heights[i]):
+            add_text(slide, bx + .22, by, cw - .44, ih, ("×  " if i == 0 else "✓  ") + text, size=12, color=ink)
+            by += ih + .10
     return h
 
 
@@ -628,64 +683,53 @@ def _pipeline(slide, x, y, w, b, style):
 
 
 def _hub(slide, x, y, w, b, style):
+    items = _layout_items(b, "items", 3, 6, "hub")
     center = b.get("center", {})
-    items = b.get("items", [])
-    cw = 3.4
-    ch = 1.1
-    cx = x + w / 2 - cw / 2
-    cy = y + 0.55
-    add_rect(slide, cx, cy, cw, ch, ACCENT)
-    add_text(slide, cx + 0.2, cy + 0.12, cw - 0.4, 0.25, center.get("kicker", ""), size=10,
-             bold=True, color=WHITE)
-    add_text(slide, cx + 0.2, cy + 0.36, cw - 0.4, 0.35, center.get("title", ""), size=15,
-             bold=True, color=WHITE)
-    body = center.get("body", "")
-    if body:
-        add_text(slide, cx + 0.2, cy + 0.7, cw - 0.4, 0.3, body, size=10, color=WHITE)
-    h = ch + 0.55
-    n = len(items)
-    if n:
-        box_w = (w - 0.3 * (n - 1)) / n if n <= 4 else (w - 0.3 * 3) / 4
-        box_w = min(box_w, 2.6)
-        gap_x = 0.3
-        total = n * box_w + (n - 1) * gap_x
-        start = x + (w - total) / 2
-        for i, it in enumerate(items):
-            bx = start + i * (box_w + gap_x)
-            by = cy + ch + 0.35
-            add_rect(slide, bx, by, box_w, 1.0, PANEL)
-            add_text(slide, bx + 0.15, by + 0.1, box_w - 0.3, 0.3, it.get("title", ""), size=12, bold=True)
-            ibody = it.get("body", "")
-            if ibody:
-                add_text(slide, bx + 0.15, by + 0.38, box_w - 0.3, 0.55, ibody, size=10,
-                         color=SUBTLE, line_spacing=1.1)
-            add_hline(slide, bx + box_w / 2, cx + cw / 2, by - 0.1, color=FAINT, w=0.75)
-        h = ch + 0.35 + 1.0 + 0.2
+    h, node_h, gap = 3.6, 0.95, 0.28
+    node_w, core_w = w * 0.29, w * 0.28
+    cx, cy = x + (w - core_w) / 2, y + (h - 1.25) / 2
+    # Edges first, so boxes mask their ends.
+    positions = []
+    for i, it in enumerate(items):
+        bank = i % 2
+        count = (len(items) + (1 if bank == 0 else 0)) // 2
+        row = i // 2
+        by = y + (h - (count * node_h + (count - 1) * gap)) / 2 + row * (node_h + gap)
+        bx = x if bank == 0 else x + w - node_w
+        positions.append((bx, by, it))
+        conn = slide.shapes.add_connector(MSO_CONNECTOR.STRAIGHT,
+            Inches(bx + (node_w if bank == 0 else 0)), Inches(by + node_h / 2),
+            Inches(cx + (0 if bank == 0 else core_w)), Inches(cy + 0.625))
+        conn.line.color.rgb = LINE
+        no_shadow(conn)
+    add_rect(slide, cx, cy, core_w, 1.25, ACCENT)
+    add_text(slide, cx + .15, cy + .12, core_w - .3, .2, center.get("kicker", ""), size=10, color=WHITE)
+    add_text(slide, cx + .15, cy + .4, core_w - .3, .35, center.get("title", ""), size=16, bold=True, color=WHITE)
+    add_text(slide, cx + .15, cy + .85, core_w - .3, .25, center.get("body", ""), size=10, color=WHITE)
+    for bx, by, it in positions:
+        add_rect(slide, bx, by, node_w, node_h, PANEL)
+        add_text(slide, bx + .15, by + .12, node_w - .3, .27, it.get("title", ""), size=13, bold=True)
+        add_text(slide, bx + .15, by + .45, node_w - .3, .42, it.get("body", ""), size=11, color=SUBTLE)
     return h
 
 
 def _timeline(slide, x, y, w, b, style):
-    items = b.get("items", [])
-    n = len(items)
-    if n == 0:
-        return 0
-    n = min(n, 5)
-    add_hline(slide, x, x + w, y + 0.5, color=LINE, w=1.2)
-    cw = w / n
-    h = 2.15
+    items = _layout_items(b, "items", 3, 5, "timeline")
+    gap = .3
+    cw = (w - gap * (len(items) - 1)) / len(items)
+    title_h = max([.35] + [text_height(it.get("title", ""), 14, cw) + .05 for it in items])
+    body_h = max([.5] + [text_height(it.get("body", ""), 12, cw, 1.15) + .1 for it in items])
+    body_y = 1.05 + title_h
+    h = body_y + body_h + .42
+    add_hline(slide, x, x + w, y + .45, color=LINE, w=1.2)
     for i, it in enumerate(items):
-        cx = x + i * cw
-        add_rect(slide, cx, y + 0.44, 0.12, 0.12, ACCENT if i == 0 else FAINT, shape=MSO_SHAPE.OVAL)
-        add_text(slide, cx - 0.2, y + 0.66, cw + 0.4, 0.3, it.get("phase", ""), size=11,
-                 bold=True, color=ACCENT_DK)
-        add_text(slide, cx - 0.2, y + 0.98, cw + 0.4, 0.35, it.get("title", ""), size=13, bold=True)
-        body = it.get("body", "")
-        if body:
-            add_text(slide, cx - 0.2, y + 1.32, cw + 0.4, 0.5, body, size=10, color=SUBTLE,
-                     line_spacing=1.1)
-        metric = it.get("metric", "")
-        if metric:
-            add_text(slide, cx - 0.2, y + h - 0.3, cw + 0.4, 0.2, metric, size=9, color=ACCENT_DK)
+        bx = x + i * (cw + gap)
+        add_rect(slide, bx, y + .39, .12, .12, ACCENT, shape=MSO_SHAPE.OVAL)
+        add_text(slide, bx, y + .66, cw, .3, it.get("phase", ""), size=11, bold=True, color=ACCENT_DK)
+        add_text(slide, bx, y + 1.02, cw, title_h, it.get("title", ""), size=14, bold=True)
+        add_text(slide, bx, y + body_y, cw, body_h, it.get("body", ""), size=12, color=SUBTLE, line_spacing=1.15)
+        if it.get("metric"):
+            add_text(slide, bx, y + h - .28, cw, .26, it["metric"], size=10, color=ACCENT_DK)
     return h
 
 
@@ -914,7 +958,7 @@ def _chart_svg(slide, x, y, w, h, b, chart_type):
 def _chart(slide, x, y, w, b, style):
     chart_type = str(b.get("chart_type", "column_clustered")).strip().lower()
     fallback = str(b.get("fallback", "auto")).lower()
-    context = (str(b.get("source", "")).strip()
+    context = (str(b.get("external_citation", "")).strip()
                or str(b.get("accessibility_note", "")).strip()
                or (str(b.get("table_view", "")).strip() if b.get("table_view") else ""))
     top = _chart_title(slide, x, y, w, b)
@@ -930,7 +974,7 @@ def _chart(slide, x, y, w, b, style):
             frame = slide.shapes.add_chart(CHART_TYPES[chart_type], Inches(x), Inches(top), Inches(w), Inches(h), data)
             chart = frame.chart
             chart.has_legend = len(b.get("series", [])) > 1
-            chart.recolour(CHART_PALETTE)
+            chart.recolour((ACCENT, ACCENT_DK, RGBColor(0x8A, 0x9A, 0xB7), RGBColor(0xB8, 0xC1, 0xD1)))
             if chart_type.startswith("bar"):
                 try:
                     chart.category_axis.reverse_order = False
@@ -939,13 +983,18 @@ def _chart(slide, x, y, w, b, style):
             try:
                 chart.has_title = False
                 chart.value_axis.has_major_gridlines = True
+                if chart_type.startswith(("bar", "column")):
+                    values = [v for series in b["series"] for v in series.get("values", [])]
+                    if values and min(values) >= 0:
+                        chart.value_axis.minimum_scale = 0
+                    chart.plots[0].gap_width = 400
             except Exception:
                 pass
         except Exception:
             if fallback == "native":
                 raise
             _chart_svg(slide, x, top, w, h, b, chart_type)
-    source = str(b.get("source", "")).strip()
+    source = str(b.get("external_citation", "")).strip()
     if source:
         add_text(slide, x, CONTENT_BOTTOM - 0.22, w, 0.2, source, size=9, color=FAINT)
     return (CONTENT_BOTTOM - y) if source else h + (top - y)
@@ -988,7 +1037,7 @@ def _bignum(slide, x, y, w, b, style):
     add_rect(slide, x + lw + 0.3, y, 0.02, max(ly - y, 2.4), LINE)
     ry = y + 0.1
     for i, text in enumerate(_point_texts(_layout_items(b, "items", 0, 3, "bignum"))):
-        ih = max(0.8, text_height(text, 14, rw - 0.7) + 0.35)
+        ih = max(0.8, text_height(text, 14, rw - 0.7, 1.25) + 0.50)
         add_text(slide, rx, ry, 0.5, 0.3, f"{i + 1:02d}", size=13, bold=True, color=ACCENT)
         add_text(slide, rx + 0.6, ry, rw - 0.6, ih - 0.2, text, size=14, color=TEXT, line_spacing=1.25)
         add_hline(slide, rx, rx + rw, ry + ih - 0.1, color=LINE, w=0.5)
@@ -1043,7 +1092,7 @@ def _quote(slide, x, y, w, b, style):
              wrap=False)
     add_text(slide, x + 0.55, y + 0.12, body_w, th + 0.1, text, size=24, bold=True,
              color=TEXT, line_spacing=1.2)
-    source = str(b.get("source", "")).strip()
+    source = str(b.get("external_citation", "")).strip()
     h = max(1.5, 0.12 + th)
     if source:
         add_hline(slide, x + 0.55, x + 2.0, y + h + 0.22, color=LINE, w=0.5)
@@ -1168,10 +1217,33 @@ BLOCK_RENDERERS = {
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
+def apply_style(path, deck):
+    """Apply the recorded palette before any shape is created; reject stale plans."""
+    import re
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    palette = data.get("palette", {})
+    keys = ("WHITE", "TEXT", "SUBTLE", "FAINT", "ACCENT", "ACCENT_DK", "ACCENT_LT", "LINE", "PANEL")
+    if any(not re.fullmatch(r"#?[0-9A-Fa-f]{6}", str(palette.get(k, ""))) for k in keys):
+        raise ValueError("style.palette 必须包含完整的九个 HEX 角色颜色")
+    if data.get("page_types") and data["page_types"] != [s.get("type") for s in deck["slides"]]:
+        raise ValueError("style.page_types 与实际 deck 不一致，请重新规划后保存 style")
+    for key in keys:
+        globals()[key] = RGBColor.from_hex(str(palette[key]).lstrip("#"))
+    for key, value in data.get("base", {}).items():
+        if key in {"MARGIN_L", "MARGIN_R", "BLOCK_GAP", "TITLE_SIZE"}:
+            if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError(f"style.base.{key} 必须是正数")
+            globals()[key] = value
+    if data.get("font"):
+        globals()["FONT"] = str(data["font"])
+    return data
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", required=True)
     ap.add_argument("--output", required=True)
+    ap.add_argument("--style", help="完整 style.json；同目录有 style.json 时自动使用")
     args = ap.parse_args()
 
     deck_path = Path(args.input)
@@ -1188,10 +1260,18 @@ def main() -> int:
         sys.stderr.write("请先跑 deck_check.py 修好 deck.json 再渲染，禁止跳过。\n")
         return 1
 
+    style_path = Path(args.style) if args.style else deck_path.resolve().with_name("style.json")
+    selected_style = None
+    if args.style or style_path.exists():
+        try:
+            selected_style = apply_style(style_path, deck)
+        except (OSError, ValueError, TypeError) as exc:
+            sys.stderr.write(f"style 注入失败: {exc}\n")
+            return 2
     global BASE_DIR
     BASE_DIR = deck_path.resolve().parent
-    source = deck.get("source", "")
-    style = {"text": TEXT, "sub": SUBTLE, "accent": ACCENT, "panel": PANEL, "source": source}
+    source = deck.get("external_citation", "")
+    style = {"text": TEXT, "sub": SUBTLE, "accent": ACCENT, "panel": PANEL, "external_citation": source}
 
     prs, blank = new_presentation()
     formulas = []
@@ -1220,14 +1300,27 @@ def main() -> int:
                                      "top": int(sh.top), "width": int(sh.width),
                                      "height": int(sh.height)})
 
+    notes_report = write_speaker_notes(prs, deck)
     out = Path(args.output).expanduser()
     if not out.is_absolute():
         out = Path.cwd() / out
     out.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(out))
+    from pptx_package import repair_package
+    repair_package(out, repair_animations=False)
+    from speaker_notes import verify_notes
+    notes_errors = verify_notes(Presentation(str(out)), deck)
+    if notes_errors:
+        raise ValueError("；".join(notes_errors))
     if formulas:
         sidecar = out.with_name(out.name + ".formulas.json")
         sidecar.write_text(json.dumps(formulas, ensure_ascii=False, indent=2), encoding="utf-8")
+    evidence = {"mode": "autonomous", "template_assets": False,
+                "palette": {key: str(globals()[key]) for key in
+                            ("WHITE", "TEXT", "SUBTLE", "FAINT", "ACCENT", "ACCENT_DK", "ACCENT_LT", "LINE", "PANEL")},
+                "style_source": str(style_path.resolve()) if selected_style else "renderer constants",
+                "notes_enabled": deck.get("notes_enabled", True), "notes": notes_report, "slides": len(prs.slides)}
+    Path(str(out) + ".render.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")
     print(str(out))
     return 0
 

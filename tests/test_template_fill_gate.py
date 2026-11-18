@@ -29,7 +29,7 @@ class PublicationGateTests(unittest.TestCase):
             prs.save(template)
             out.write_bytes(b"previous successful output")
             deck, mapping = root / "deck.json", root / "map.json"
-            deck.write_text(json.dumps({"slides": [{"title": "测试"}]}))
+            deck.write_text(json.dumps({"slides": [{"title": "测试", "notes": "说明本页的布局容量检查。"}]}))
             mapping.write_text(json.dumps({"slides": [{"template_slide": 1}]}))
             argv = ["template_fill.py", "--template", str(template), "--deck", str(deck),
                     "--map", str(mapping), "--output", str(out)]

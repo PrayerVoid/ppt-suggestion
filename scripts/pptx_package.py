@@ -119,6 +119,73 @@ def _problems(package):
                 if attr.startswith(f"{{{R}}}") and rid not in rels:
                     problems.append(f"{name}: 引用的关系不存在: {rid!r}")
 
+    # A present rId can still name the wrong kind of part (e.g. tags -> notesSlide).
+    typed_elements = {'tags': 'tags', 'sldId': 'slide', 'sldMasterId': 'slideMaster',
+                      'sldLayoutId': 'slideLayout', 'notesMasterId': 'notesMaster'}
+    owned_targets = {}
+    for source, rels in relationships.items():
+        root = roots.get(source)
+        if root is not None:
+            for element in root.iter():
+                kind = typed_elements.get(etree.QName(element).localname) if etree.QName(element).namespace == P else None
+                rid = element.get(f'{{{R}}}id')
+                rel = rels.get(rid)
+                if kind and rel is not None and rel.get('Type') != R + '/' + kind:
+                    problems.append(f'{source}: {etree.QName(element).localname} 的关系类型错误: {rid} 应为 {kind}，实际 {rel.get("Type")}')
+        for rel in rels.values():
+            kind = rel.get('Type', '').rsplit('/', 1)[-1]
+            if kind not in {'tags', 'notesSlide'} or rel.get('TargetMode') == 'External':
+                continue
+            target = _target_part(source, rel.get('Target', ''))
+            previous = owned_targets.get(target)
+            if previous is not None and previous != source:
+                problems.append(f'{target}: {kind} 部件被多个源共享: {previous}, {source}；克隆必须使用独立部件')
+            owned_targets[target] = source
+            if kind == 'notesSlide':
+                backlinks = [_target_part(target, r.get('Target', ''))
+                             for r in relationships.get(target, {}).values()
+                             if r.get('Type') == R + '/slide']
+                if backlinks != [source]:
+                    problems.append(f'{source}: notesSlide 回指错误: {target} -> {backlinks}')
+            target_root = roots.get(target)
+            expected_root = f'{{{P}}}' + ('tagLst' if kind == 'tags' else 'notes')
+            if target_root is not None and target_root.tag != expected_root:
+                problems.append(f'{source}: {kind} 目标部件根元素错误: {target}')
+
+    mc = 'http://schemas.openxmlformats.org/markup-compatibility/2006'
+    for name, root in roots.items():
+        for element in root.iter():
+            prefixes = element.get(f'{{{mc}}}Ignorable', '').split()
+            if element.tag == f'{{{mc}}}Choice':
+                prefixes += element.get('Requires', '').split()
+            for prefix in prefixes:
+                if prefix not in element.nsmap:
+                    problems.append(f'{name}: MCE 前缀未声明: {prefix}')
+
+    content_types = roots.get('[Content_Types].xml')
+    if content_types is not None:
+        overrides = {n.get('PartName', '').lstrip('/') for n in content_types if n.get('PartName')}
+        defaults = {n.get('Extension') for n in content_types if n.get('Extension')}
+        for name in sorted(names - {'[Content_Types].xml'}):
+            if name not in overrides and name.rsplit('.', 1)[-1] not in defaults:
+                problems.append(f'{name}: 缺少 Content-Type 声明')
+        for name in sorted(overrides - names):
+            problems.append(f'{name}: Content-Type 指向不存在的部件')
+
+    # Reject reused slide identities conservatively. Duplicates were observed in
+    # a repaired diagnostic copy; this does not establish the original failure cause.
+    slide_creation_ids = {}
+    for name in _parts(names, 'ppt/slides'):
+        root = roots.get(name)
+        if root is None:
+            continue
+        values = root.xpath('.//p:cSld/p:extLst/p:ext/*[local-name()="creationId" and namespace-uri()="http://schemas.microsoft.com/office/powerpoint/2010/main"]/@val', namespaces=NS)
+        for value in values:
+            if value in slide_creation_ids:
+                problems.append(f'{name}: slide creationId {value} 与 {slide_creation_ids[value]} 重复；须在生成时分配独立页标识，不能依赖原生修复')
+            else:
+                slide_creation_ids[value] = name
+
     animation_parts = sum((_parts(names, folder) for folder in (
         "ppt/slides", "ppt/slideLayouts", "ppt/slideMasters")), [])
     for name in animation_parts:
@@ -157,7 +224,9 @@ def _problems(package):
 
 
 def package_problems(path):
-    """返回内部关系、页内 shape id、动画/构建引用及页数元数据问题。"""
+    """检查关系存在性及部分类型、自有标签/备注归属与回指、MCE 前缀、
+    Content-Type 覆盖、页内 ID、动画引用和页数元数据；不等同于完整 XSD 或原生打开验证。
+    """
     try:
         with ZipFile(path) as package:
             return _problems(package)

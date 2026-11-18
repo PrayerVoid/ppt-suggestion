@@ -63,8 +63,8 @@ def _radial(slide, x, y, w, b, style):
         return 0
     n = len(items)
     cx, cy = x + w / 2, y + 1.8
-    cw, ch = 1.9, 0.78
-    nw, nh = (1.75 if n <= 4 else 1.55), 1.1
+    cw, ch = 2.15, 0.9
+    nw, nh = (2.35 if n <= 4 else 1.85), 1.2
     rx = min(3.7, w * 0.34)
     ry = 1.2
     positions = []
@@ -87,7 +87,7 @@ def _radial(slide, x, y, w, b, style):
         body = item.get("body", "")
         if body:
             add_text(slide, px + 0.12, py + 0.34, nw - 0.24, nh - 0.4, body,
-                     size=9, color=SUBTLE, line_spacing=1.05)
+                     size=12, color=SUBTLE, line_spacing=1.1)
     return 3.6
 
 
@@ -102,8 +102,8 @@ def _ring(slide, x, y, w, b, style):
              line=LINE, shape=MSO_SHAPE.OVAL)
     add_rect(slide, cx - outer * 0.39, cy - outer * 0.39, outer * 0.78, outer * 0.78,
              ACCENT_LT, shape=MSO_SHAPE.OVAL)
-    add_text(slide, cx - outer * 0.25, cy - 0.25, outer * 0.5, 0.5, value,
-             size=22, bold=True, color=ACCENT_DK, align=PP_ALIGN.CENTER,
+    add_text(slide, cx - outer * 0.25, cy - 0.45, outer * 0.5, 0.9, value,
+             size=40, bold=True, color=ACCENT_DK, align=PP_ALIGN.CENTER,
              anchor=MSO_ANCHOR.MIDDLE, wrap=False)
     tx = x + outer + 0.55
     tw = w - outer - 0.55

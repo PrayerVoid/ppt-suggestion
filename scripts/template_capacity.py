@@ -39,38 +39,38 @@ def check_text(shape, text, label, width=None, height=None, size=None):
     """Return hard capacity problems for a proposed text replacement."""
     if not getattr(shape, "has_text_frame", False):
         return []
+    # Never mutate the source during preflight: assigning shape.text discards
+    # run formatting, so restoring only the string corrupts subsequent checks.
+    from copy import deepcopy
+    shape = deepcopy(shape)
     width = _inches(width if width is not None else shape.width)
     height = _inches(height if height is not None else shape.height)
     value = str(text)
     if not value.strip():
         return []
+    from slide_clone import replace_text
+    replace_text(shape, value)
     tf = shape.text_frame
-    old = tf.text
-    try:
-        shape.text = value
-        tf = shape.text_frame
-        if size is not None:
-            from power_pptx.util import Pt
-            for paragraph in tf.paragraphs:
-                for run in paragraph.runs:
-                    run.font.size = Pt(float(size))
-        if _vertical(shape):
-            capacity = _label_capacity(shape, height)
-            count = len(value.replace("\n", ""))
-            if count > capacity:
-                return [f"{label} 竖排文本容量不足：{count} 字超过约 {capacity} 字，请缩短标签或换页"]
-            return []
-        estimated = estimate_text_height(tf, width)
-        if estimated > height + max(0.04, height * 0.10):
-            return [f"{label} 文本框溢出，容量不足：估算高度 {estimated:.2f}in 超过文本框 {height:.2f}in，请换更大版式或拆页"]
-        if tf.word_wrap is False:
-            longest = max((paragraph_width(p, line) for p in tf.paragraphs
-                           for line in p.text.replace("\v", "\n").split("\n")), default=0)
-            inner = max(0.01, width - _inches(tf.margin_left) - _inches(tf.margin_right))
-            if longest > inner + 0.04:
-                return [f"{label} 不换行文本过宽：估算 {longest:.2f}in 超过可用宽度 {inner:.2f}in，请缩短或换版式"]
-    finally:
-        shape.text = old
+    if size is not None:
+        from power_pptx.util import Pt
+        for paragraph in tf.paragraphs:
+            for run in paragraph.runs:
+                run.font.size = Pt(float(size))
+    if _vertical(shape):
+        capacity = _label_capacity(shape, height)
+        count = len(value.replace("\n", ""))
+        if count > capacity:
+            return [f"{label} 竖排文本容量不足：{count} 字超过约 {capacity} 字，请缩短标签或换页"]
+        return []
+    estimated = estimate_text_height(tf, width)
+    if estimated > height + max(0.04, height * 0.10):
+        return [f"{label} 文本框溢出，容量不足：估算高度 {estimated:.2f}in 超过文本框 {height:.2f}in，请换更大版式或拆页"]
+    if tf.word_wrap is False:
+        longest = max((paragraph_width(p, line) for p in tf.paragraphs
+                       for line in p.text.replace("\v", "\n").split("\n")), default=0)
+        inner = max(0.01, width - _inches(tf.margin_left) - _inches(tf.margin_right))
+        if longest > inner + 0.04:
+            return [f"{label} 不换行文本过宽：估算 {longest:.2f}in 超过可用宽度 {inner:.2f}in，请缩短或换版式"]
     return []
 
 
